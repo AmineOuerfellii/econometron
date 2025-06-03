@@ -1,11 +1,12 @@
 import unittest
 import numpy as np
 import pandas as pd
-from Models import Base_dsge
+import econometrica as ec
+from ec import Model
 
 class TestModel(unittest.TestCase):
     def setUp(self):
-        self.model = Base_dsge.Model(
+        self.model = Model(
             equations=[
             "x_t - x_tp1 + (1/g) * (r_t - p_tp1) = 0",
             "p_t - beta * p_tp1 - kappa * (x_t - xbar_t) = 0",

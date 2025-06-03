@@ -28,10 +28,9 @@ def kalman_objective(params, fixed_params, param_names, y, update_state_space):
     for name, value in zip(param_names, params):
         full_params[name] = value
 
-    # Update state-space matrices
-    ss_params = update_state_space(full_params)
     # Run Kalman filter
     try:
+        ss_params = update_state_space(full_params)
         kalman = Kalman(ss_params)
         result = kalman.filter(y)
         log_lik = result['log_lik']

@@ -18,7 +18,8 @@ if __name__ == "__main__":
             "scipy>=1.13.0",
             "matplotlib>=3.8.4",
             "statsmodels>=0.14.1",
-            "sympy>=1.14.0"
+            "sympy>=1.14.0",
+            "colorama"
         ],
         classifiers=[
             "Development Status :: 3 - Alpha",

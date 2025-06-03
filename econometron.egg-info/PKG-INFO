@@ -2,10 +2,10 @@ Metadata-Version: 2.1
 Name: econometron
 Version: 0.0.1
 Summary: A Python package for solving ,simulating and estimating DSGE and VAR models.
-Home-page: https://github.com/Amineouerfellii/econometron
+Home-page: UNKNOWN
 Author: Mohamed Amine Ouerfelli 
 Author-email: mohamedamine.ouerfelli@outlook.com
-License: UNKNOWN
+License: MIT
 Platform: UNKNOWN
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Science/Research

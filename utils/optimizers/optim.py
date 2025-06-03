@@ -171,10 +171,22 @@ def simulated_annealing(function, x, lower_bounds, upper_bounds,T, cooling_rate,
 
 ################################################## Genetic Algorithm #####################################################
 
-def genetic_algorithm(func,x0,lb,ub,pop_size=50,n_gen=100,crossover_rate=0.8,mutation_rate=0.1,elite_frac=0.1,seed=1,verbose=True):
+def genetic_algorithm(
+    func,
+    x0,
+    lb,
+    ub,
+    pop_size=50,
+    n_gen=100,
+    crossover_rate=0.8,
+    mutation_rate=0.1,
+    elite_frac=0.1,
+    seed=1,
+    verbose=True
+):
     """
     Genetic Algorithm for parameter optimization.
-    
+
     Returns:
     --------
     dict
@@ -186,7 +198,7 @@ def genetic_algorithm(func,x0,lb,ub,pop_size=50,n_gen=100,crossover_rate=0.8,mut
         lb = np.maximum(np.array(lb, dtype=float), 1e-6)
         ub = np.array(ub, dtype=float)
         N = len(x0)
-        
+
         # Validate inputs
         if len(lb) != N or len(ub) != N:
             result = {'x': None, 'fun': None, 'nfev': 0, 'message': "Bounds length does not match parameter vector length."}
@@ -196,7 +208,7 @@ def genetic_algorithm(func,x0,lb,ub,pop_size=50,n_gen=100,crossover_rate=0.8,mut
             result = {'x': None, 'fun': None, 'nfev': 0, 'message': "Initial guess outside bounds."}
             raise ValueError(f"Returning early due to invalid x0: {result}")
             return result
-        
+
         # Initialize population
         population = np.random.uniform(lb, ub, (pop_size, N))
         population[0] = x0
@@ -205,7 +217,7 @@ def genetic_algorithm(func,x0,lb,ub,pop_size=50,n_gen=100,crossover_rate=0.8,mut
         n_elite = max(1, int(elite_frac * pop_size))
         x_opt = population[np.argmin(fitness)]
         f_opt = np.min(fitness)
-        
+
         # GA loop
         for gen in range(n_gen):
             parents = np.zeros((pop_size - n_elite, N))
@@ -236,18 +248,33 @@ def genetic_algorithm(func,x0,lb,ub,pop_size=50,n_gen=100,crossover_rate=0.8,mut
             if verbose and gen % 10 == 0:
                 near_zero = np.sum(np.any(population < 1e-6, axis=1))
                 print(f"Generation {gen}: Best fitness = {f_opt}, Mean fitness = {np.mean(fitness)}, Near-zero params = {near_zero}")
-                print({'x': x_opt,'fun': f_opt,'nfev': nfev,'message': 'Genetic Algorithm iteration.'})
-        
+                print({
+                    'x': x_opt,
+                    'fun': f_opt,
+                    'nfev': nfev,
+                    'message': 'Genetic Algorithm iteration.'
+                })
+
         # Prepare result
-        result = {'x': x_opt,'fun': float(f_opt),'nfev': nfev,'message': 'Genetic Algorithm completed successfully.'}
-        
+        result = {
+            'x': x_opt,
+            'fun': float(f_opt),  # Convert np.float64 to float
+            'nfev': nfev,
+            'message': 'Genetic Algorithm completed successfully.'
+        }
+
         if verbose:
             print(f"Final GA result: {result}")
-          
+
         return result
-    
+
     except Exception as e:
-        error_result = {'x': None,'fun': None,'nfev': None,'message': f'GA failed: {str(e)}'}
+        error_result = {
+            'x': None,
+            'fun': None,
+            'nfev': None,
+            'message': f'GA failed: {str(e)}'
+        }
         print(f"Error in genetic_algorithm: {e}, returning: {error_result}")
         return error_result
 

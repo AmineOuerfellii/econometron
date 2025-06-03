@@ -2,8 +2,9 @@ LICENSE
 README.md
 setup.py
 Models/Base_Var.py
-Models/Base_dsge.py
+Models/Linear_RE.py
 Models/__init__.py
+Models/varima.py
 econometron.egg-info/PKG-INFO
 econometron.egg-info/SOURCES.txt
 econometron.egg-info/dependency_links.txt

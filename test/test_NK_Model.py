@@ -1,9 +1,10 @@
 import numpy as np
 import scipy as sp
 import matplotlib as plt
-import econometron
+import econometron as ec
 
-from econometron.Models import Model
+from ec import ec.Models
+
 
 
 
