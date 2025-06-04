@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
-from utils.optimizers.optim import simulated_annealing
-from utils.optimizers.eval import evaluate_func
-from utils.estimation.Bayesian import rwm_kalman
-from utils.estimation.MLE import genetic_algorithm_kalman
+import econometron
+from econometron.utils.optimizers.optim import simulated_annealing
+from econometron.utils.optimizers.eval import evaluate_func
+from econometron.utils.estimation.Bayesian import rwm_kalman
+from econometron.utils.estimation.MLE import genetic_algorithm_kalman
 
 def test_simulated_annealing_basic():
     # Simple quadratic function: minimum at x=0

@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from Models import VAR
+import econometron
+from econometron.Models import VAR
 import pytest
 
 

@@ -3,14 +3,14 @@ from setuptools import setup, find_packages
 if __name__ == "__main__":
     setup(
         name="econometron",
-        version="0.0.1",
+        version="0.0.2.1",
         author="Mohamed Amine Ouerfelli ",
         author_email="mohamedamine.ouerfelli@outlook.com",
         description="A Python package for solving ,simulating and estimating DSGE and VAR models.",
         long_description=open("README.md", encoding="utf-8").read(),
         long_description_content_type="text/markdown",
         url="https://econometron.netlify.app",
-        packages=find_packages(),
+        packages=find_packages(include=["econometron", "econometron.*"]),
         license="MIT",
         install_requires=[
             "numpy>=1.23.5",
@@ -18,7 +18,7 @@ if __name__ == "__main__":
             "scipy>=1.13.0",
             "matplotlib>=3.8.4",
             "statsmodels>=0.14.1",
-            "sympy>=1.14.0",
+            "sympy>=1.13.0",
             "colorama"
         ],
         classifiers=[

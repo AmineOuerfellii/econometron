@@ -1,8 +1,8 @@
 Metadata-Version: 2.4
 Name: econometron
-Version: 0.0.1
+Version: 0.0.2.1
 Summary: A Python package for solving ,simulating and estimating DSGE and VAR models.
-Home-page: 
+Home-page: https://econometron.netlify.app
 Author: Mohamed Amine Ouerfelli 
 Author-email: mohamedamine.ouerfelli@outlook.com
 License: MIT
@@ -22,13 +22,14 @@ Requires-Dist: pandas>=1.5.3
 Requires-Dist: scipy>=1.13.0
 Requires-Dist: matplotlib>=3.8.4
 Requires-Dist: statsmodels>=0.14.1
-Requires-Dist: sympy>=1.14.0
+Requires-Dist: sympy>=1.13.0
 Requires-Dist: colorama
 Dynamic: author
 Dynamic: author-email
 Dynamic: classifier
 Dynamic: description
 Dynamic: description-content-type
+Dynamic: home-page
 Dynamic: license
 Dynamic: license-file
 Dynamic: requires-dist

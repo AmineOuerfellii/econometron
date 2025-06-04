@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import pytest
-from Models.varima import VARIMA
+from econometron.Models.varima import VARIMA
 
 def generate_synthetic_varima_data(n_obs=100, n_vars=2, ar_params=None, ma_params=None, seed=42):
     np.random.seed(seed)

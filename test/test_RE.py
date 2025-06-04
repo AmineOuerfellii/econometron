@@ -1,12 +1,13 @@
 import unittest
 import numpy as np
 import pandas as pd
-from Models import RE_model as Model
-from utils.estimation.Bayesian import rwm_kalman
-from utils.estimation.MLE import genetic_algorithm_kalman, simulated_annealing_kalman
-from utils.state_space.update_ss import make_state_space_updater
-from utils.estimation.prior import make_prior_function
-from utils.estimation.Bayesian import compute_proposal_sigma
+import econometron
+from econometron.Models import RE_model as Model
+from econometron.utils.estimation.Bayesian import rwm_kalman
+from econometron.utils.estimation.MLE import genetic_algorithm_kalman, simulated_annealing_kalman
+from econometron.utils.state_space.update_ss import make_state_space_updater
+from econometron.utils.estimation.prior import make_prior_function
+from econometron.utils.estimation.Bayesian import compute_proposal_sigma
 
 class TestModel(unittest.TestCase):
     def setUp(self):
