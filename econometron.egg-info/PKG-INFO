@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: econometron
-Version: 0.0.2.1
+Version: 0.1.0
 Summary: A Python package for solving ,simulating and estimating DSGE and VAR models.
 Home-page: https://econometron.netlify.app
 Author: Mohamed Amine Ouerfelli 

@@ -4,8 +4,8 @@ from scipy.stats import chi2, shapiro
 from statsmodels.tsa.stattools import acf, adfuller
 import matplotlib.pyplot as plt
 from itertools import product
-from econometron.utils.data_preparation import process_time_series
-from econometron.utils.estimation.OLS import ols_estimator
+from utils.data_preparation import process_time_series
+from utils.estimation.OLS import ols_estimator
 
 class VAR:
     """

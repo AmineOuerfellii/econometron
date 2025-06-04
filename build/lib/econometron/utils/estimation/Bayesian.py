@@ -1,8 +1,8 @@
 
-from econometron.filters import kalman_objective
-from econometron.filters import Kalman
-from econometron.utils.optimizers import rwm,compute_proposal_sigma
-from econometron.utils.estimation.results import compute_stats, create_results_table
+from filters import kalman_objective
+from filters import Kalman
+from utils.optimizers import rwm,compute_proposal_sigma
+from utils.estimation.results import compute_stats, create_results_table
 import numpy as np
 
 
