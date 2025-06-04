@@ -1,12 +1,11 @@
-Metadata-Version: 2.1
+Metadata-Version: 2.4
 Name: econometron
 Version: 0.0.1
 Summary: A Python package for solving ,simulating and estimating DSGE and VAR models.
-Home-page: UNKNOWN
+Home-page: 
 Author: Mohamed Amine Ouerfelli 
 Author-email: mohamedamine.ouerfelli@outlook.com
 License: MIT
-Platform: UNKNOWN
 Classifier: Development Status :: 3 - Alpha
 Classifier: Intended Audience :: Science/Research
 Classifier: License :: OSI Approved :: MIT License
@@ -18,6 +17,23 @@ Classifier: Operating System :: OS Independent
 Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 License-File: LICENSE
+Requires-Dist: numpy>=1.23.5
+Requires-Dist: pandas>=1.5.3
+Requires-Dist: scipy>=1.13.0
+Requires-Dist: matplotlib>=3.8.4
+Requires-Dist: statsmodels>=0.14.1
+Requires-Dist: sympy>=1.14.0
+Requires-Dist: colorama
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: license
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
 
 # Econometron
 
@@ -53,4 +69,3 @@ To install Econometron, use pip:
 ```bash
 pip install econometron 
 ```
-

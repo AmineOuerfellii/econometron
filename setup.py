@@ -9,7 +9,7 @@ if __name__ == "__main__":
         description="A Python package for solving ,simulating and estimating DSGE and VAR models.",
         long_description=open("README.md", encoding="utf-8").read(),
         long_description_content_type="text/markdown",
-        url="",
+        url="https://econometron.netlify.app",
         packages=find_packages(),
         license="MIT",
         install_requires=[
