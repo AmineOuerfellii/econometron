@@ -275,70 +275,53 @@ class VARIMA:
     def log_likelihood(self, params, data, p, q, K):
         """
         Compute negative log-likelihood for MLE.
-        
-        Parameters:
-        - params: Parameter vector (constant, AR, MA).
-        - data: Differenced time series data.
-        - p: AR lag order.
-        - q: MA lag order.
-        - K: Number of variables.
-        
-        Returns:
-        - Negative log-likelihood.
         """
         try:
             residuals = self.compute_residuals(data, params, p, q, K)
             if residuals.shape[0] <= K:
                 return 1e10
-            
-            resid_cov = np.cov(residuals.T) + 1e-3 * np.eye(K)  # Increased regularization
-            if not np.all(np.linalg.eigvals(resid_cov) > 0):
+            resid_cov = np.cov(residuals.T) + 1e-2 * np.eye(K)  # Stronger regularization
+            min_eig = np.min(np.real(np.linalg.eigvals(resid_cov)))
+            if min_eig <= 1e-8:
+                resid_cov += (abs(min_eig) + 1e-2) * np.eye(K)
+            try:
+                log_det = np.log(np.linalg.det(resid_cov))
+            except (np.linalg.LinAlgError, ValueError, OverflowError):
                 return 1e10
-            
-            log_det = np.log(np.linalg.det(resid_cov))
+            if not np.isfinite(log_det):
+                return 1e10
             T = residuals.shape[0]
-            
             ll = -0.5 * T * (K * np.log(2 * np.pi) + log_det)
-            resid_cov_inv = np.linalg.pinv(resid_cov)  # Use pseudo-inverse
+            resid_cov_inv = np.linalg.pinv(resid_cov)
             for t in range(T):
                 ll -= 0.5 * residuals[t] @ resid_cov_inv @ residuals[t]
-            
             return -ll
-        except (np.linalg.LinAlgError, ValueError, OverflowError):
+        except Exception:
             return 1e10
     
     def compute_aic_bic(self, residuals, K, p, q, T):
         """
         Compute AIC and BIC for model evaluation.
-        
-        Parameters:
-        - residuals: Model residuals.
-        - K: Number of variables.
-        - p: AR lag order.
-        - q: MA lag order.
-        - T: Number of observations.
-        
-        Returns:
-        - aic: Akaike Information Criterion.
-        - bic: Bayesian Information Criterion.
         """
         try:
-            resid_cov = np.cov(residuals.T) + 1e-3 * np.eye(K)  # Increased regularization
-            if not np.all(np.linalg.eigvals(resid_cov) > 0):
+            resid_cov = np.cov(residuals.T) + 1e-2 * np.eye(K)
+            min_eig = np.min(np.real(np.linalg.eigvals(resid_cov)))
+            if min_eig <= 1e-8:
+                resid_cov += (abs(min_eig) + 1e-2) * np.eye(K)
+            try:
+                log_det = np.log(np.linalg.det(resid_cov))
+            except (np.linalg.LinAlgError, ValueError, OverflowError):
                 return np.inf, np.inf
-            
-            log_det = np.log(np.linalg.det(resid_cov))
+            if not np.isfinite(log_det):
+                return np.inf, np.inf
             n_params = K * (1 + K * p + K * q)
-            
             ll = -0.5 * T * (K * np.log(2 * np.pi) + log_det)
             for t in range(T):
                 ll -= 0.5 * residuals[t] @ np.linalg.pinv(resid_cov) @ residuals[t]
-            
             aic = -2 * ll + 2 * n_params
             bic = -2 * ll + n_params * np.log(T)
-            
             return aic, bic
-        except (np.linalg.LinAlgError, ValueError):
+        except Exception:
             return np.inf, np.inf
     
     def inverse_difference(self, series, forecasts, diff_order, initial_values):
@@ -622,17 +605,18 @@ class VARIMA:
                   print(f"  Too many parameters ({n_params}) for {T} observations. Skipping...")
                   continue
               
-              # Initialize parameters
+              # Improved parameter initialization and bounds
               np.random.seed(42)
-              initial_params = np.random.randn(n_params) * 0.01
+              initial_params = np.random.uniform(-0.1, 0.1, n_params)
+              bounds = [(-0.99, 0.99)] * n_params
               
               # Optimize parameters
               result = minimize(
-                  self.log_likelihood, 
-                  initial_params, 
+                  self.log_likelihood,
+                  initial_params,
                   args=(data_array, p, q, K),
-                  method='L-BFGS-B', 
-                  bounds=[(-1, 1)] * n_params,
+                  method='L-BFGS-B',
+                  bounds=bounds,
                   options={'disp': False, 'maxiter': 1000}
               )
               
