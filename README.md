@@ -1,6 +1,6 @@
 # Econometron
 
-**Econometron** is a Python library designed for building, simulating, and estimating macroeconomic models, with a focus on **Dynamic Stochastic General Equilibrium (DSGE)** and **Vector Autoregression (VAR)** models. It offers a modular architecture and a suite of tools tailored for economists, researchers, and data scientists working in quantitative macroeconomics.
+**Econometron** is a Python library designed for building, simulating, and estimating macroeconomic models, with a focus on **Dynamic Stochastic General Equilibrium (DSGE)** , **Vector Autoregression (VAR)** , **Vector Autoregression Integrated Moving Average (VARIMA)** models. It offers a modular architecture and a suite of tools tailored for economists, researchers, and data scientists working in quantitative macroeconomics.
 
 ## Features
 
