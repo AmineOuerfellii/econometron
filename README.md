@@ -1,34 +1,83 @@
-# Econometron
+# **Econometron**
 
-**Econometron** is a Python library designed for building, simulating, and estimating macroeconomic models, with a focus on **Dynamic Stochastic General Equilibrium (DSGE)** , **Vector Autoregression (VAR)** , **Vector Autoregression Integrated Moving Average (VARIMA)** models. It offers a modular architecture and a suite of tools tailored for economists, researchers, and data scientists working in quantitative macroeconomics.
+**Econometron** is a Python module designed for approximating, solving, and simulating **Dynamic Stochastic General Equilibrium (DSGE)** models. It combines classical econometric techniques with modern machine learning tools to offer a flexible framework for macroeconomic modeling, time series forecasting, and rational expectations analysis.
+It currently supports : VAR ,VARIMA , N-Beats Models
+---
 
-## Features
+## **Core Model Types**
 
-### DSGE Modelling
-Econometron provides a robust framework for working with DSGE models:
-- **Model Definition**: Specify model equations, parameters, and variables (e.g., consumption, capital, labor) in a flexible, user-friendly syntax.
-- **Simulation**: Generate time series data under stochastic shocks, such as technology or monetary policy shocks.
-- **Estimation**: Calibrate and estimate model parameters using numerical solvers and optimization techniques.
-- **Numerical Solvers**: Solve nonlinear or linearized DSGE models efficiently.
+* **Vector Autoregression (VAR):**
+  A multivariate model that captures the interdependencies and dynamic relationships among multiple time series. Includes OLS estimation, optimal lag selection, and forecasting capabilities.
 
-### VAR Modelling
-Econometron supports Vector Autoregression (VAR) models for analyzing multivariate time series:
-- **Model Specification**: Define VAR models with multiple time series (e.g., GDP, inflation, interest rates).
-- **Estimation**: Estimate VAR parameters using Ordinary Least Square.
-- **Forecasting**: Generate forecasts and impulse response functions.
+* **Vector Autoregressive Integrated Moving Average (VARIMA):**
+  An extension of VAR for non-stationary time series, incorporating differencing and moving average components. Ideal for modeling trending or seasonal multivariate data.
 
-### Advanced Tools
-- **Kalman Filter & Smoother**:perform filtering and Smoothing for state estimation and likelihood evaluation.
-- **Optimization Algorithms**:
-  - **Random Walk Metropolis (RWM)**: Bayesian estimation via Markov Chain Monte Carlo (MCMC) methods.
-  - **Genetic Algorithms**: Global optimization for complex parameter spaces.
-  - **Simulated Annealing**: Robust optimization for non-smooth or nonlinear problems.
-- **Priors**: Specify and customize prior distributions for Bayesian estimation.
-- **State-Space Updates**: Update state-space solution for DSGE models.
+* **Linear Rational Expectations (Linear RE):**
+  A solver for linear rational expectations models often used in DSGE frameworks. Supports symbolic modeling, state/control variable classification, and linear algebra-based solutions.
 
-## Installation
-To install Econometron, use pip:
+* **Nonlinear DSGE (Nonlinear RE):**
+  An abstract framework for implementing nonlinear DSGE models. Provides the foundation for defining and solving models with nonlinearities in states or controls.
 
-```bash
-pip install econometron 
+* **N-BEATS (Neural Basis Expansion for Time Series):**
+  A state-of-the-art deep learning model for time series forecasting. Supports flexible architecture configurations (block, stack, full) and customizable basis functions like Chebyshev polynomials. Works with both univariate and multivariate data.
+
+---
+
+## **Key Features**
+
+* Kalman Filter and Smoother implementations
+* Bayesian and Maximum Likelihood estimation methods
+* Tools for time series data preparation and transformation
+* Optimizers and solvers for structural and reduced-form models
+* Modular and extensible architecture for building custom models
+
+---
+
+## **Project Structure**
+
 ```
+econometron/
+├── filters/         # Kalman filtering and smoothing algorithms
+├── models/          # Core model classes (VAR, ARIMA, RE, etc.)
+├── utils/           # Data handling, estimation, and optimization tools
+test/                # Unit tests and example notebooks
+plots/               # Visual outputs and diagnostics
+requirements.txt     # Project dependencies
+setup.py             # Installation script
+```
+
+---
+
+## **Getting Started**
+
+1. **Download the source**
+   [Download here](https://github.com/Amineouerfellii/econometron)
+
+2. **Install dependencies**
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **Install the package**
+
+   ```bash
+   python setup.py install
+   ```
+
+---
+
+## **Documentation**
+
+* **Econometron Docs:**
+  [https://econometron.netlify.app]https://(https://econometron.netlify.app))
+
+---
+
+## **License**
+
+This project is licensed under the **MIT License** — free for personal and commercial use, with proper attribution.
+
+---
+
+Let me know if you'd like help writing an [example notebook](f), [API reference](f), or [contribution guide](f).
