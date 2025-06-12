@@ -1,4 +1,5 @@
 from econometron.Models.n_beats import *
+import pytest
 # Parameters
 def test_nbeats():
     input_size = 20
