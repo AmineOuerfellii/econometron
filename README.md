@@ -1,6 +1,6 @@
 # **Econometron**
 
-**Econometron** is a Python module designed for approximating, solving, and simulating **Dynamic Stochastic General Equilibrium (DSGE)** models. It combines classical econometric techniques with modern machine learning tools to offer a flexible framework for macroeconomic modeling, time series forecasting, and rational expectations analysis.
+### **Econometron** is a Python module designed for approximating, solving, and simulating **Dynamic Stochastic General Equilibrium (DSGE)** models. It combines classical econometric techniques with modern machine learning tools to offer a flexible framework for macroeconomic modeling, time series forecasting, and rational expectations analysis.
 It currently supports : VAR ,VARIMA , N-Beats Models
 ---
 
@@ -78,6 +78,3 @@ setup.py             # Installation script
 
 This project is licensed under the **MIT License** — free for personal and commercial use, with proper attribution.
 
----
-
-Let me know if you'd like help writing an [example notebook](f), [API reference](f), or [contribution guide](f).
