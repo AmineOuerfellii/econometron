@@ -1,55 +1,111 @@
 # Econometron
 
-Econometron is a Python module for approximating, solving, and simulating dynamic stochastic general equilibrium (DSGE) models. It provides advanced tools for both classical and modern time series analysis, with a strong focus on rational expectations modeling and macroeconomic simulation.
+**Econometron** is a Python library for building, simulating, and estimating dynamic and Timeseries models, with a focus on:
+- **Dynamic Stochastic General Equilibrium (DSGE) models**
+- **Vector Autoregression (VAR) models**
+- **Vector Autoregression Integrated Moving Average (VARIMA) models**
+- **State space models and Kalman filtering**
+- **Deep learning time series (N-BEATS)**
 
-## Core Model Types
+Econometron offers a modular, extensible architecture and a suite of tools for economists, researchers, and data scientists working in quantitative macroeconomics.
 
-- **Vector Autoregression (VAR):**
-  Multivariate time series model for analyzing the dynamic impact and interdependencies among several time series. Implements OLS estimation, lag selection, and forecasting.
-
-- **Vector Autoregressive Integrated Moving Average (VARIMA):**
-  Extends VAR to handle non-stationary data by including differencing and moving average components. Suitable for multivariate time series with trends or seasonality.
-
-- **Linear Rational Expectations (Linear RE):**
-  Framework for solving and simulating linear rational expectations models, commonly used in macroeconomic DSGE analysis. Handles symbolic equations, state/control variable separation, and solution via linear algebra.
-
-- **Nonlinear Rational Expectations (Nonlinear RE):**
-  Abstract base for nonlinear rational expectations models. Designed for custom solution methods where model equations are nonlinear in states or controls.
-
-- **N-BEATS (Neural Basis Expansion for Time Series):**
-  Deep learning model for time series forecasting. Implements block, stack, and full model architectures with customizable basis functions (e.g., Chebyshev polynomials). Suitable for both univariate and multivariate forecasting tasks.
+---
 
 ## Features
 
-- Kalman filter and smoother algorithms
-- Bayesian and Maximum Likelihood estimation
-- Utilities for time series data preparation and processing
-- Optimizers and solvers for parameter estimation
-- Extensible architecture for custom econometric and DSGE models
+### DSGE Modelling
+- **Flexible Model Definition:** Specify model equations, parameters, and variables in a symbolic, user-friendly syntax.
+- **Simulation:** Generate time series data under stochastic shocks (e.g., technology, policy shocks).
+- **Estimation:** Calibrate and estimate model parameters using numerical solvers and optimization techniques.
+- **Linear & Nonlinear Solvers:** Solve nonlinear or linearized DSGE models efficiently.
 
-## Project Structure
+### VAR & VARIMA Modelling
+- **VAR:** Analyze and forecast multivariate time series (e.g., GDP, inflation, interest rates) with automatic lag selection, diagnostics, and impulse response analysis.
+- **VARIMA:** Model and forecast non-stationary multivariate time series with integrated differencing and moving average components.
 
-- `econometron/`: Main package source code
-  - `filters/`: Kalman filter, smoother, and related algorithms
-  - `Models/`: Model classes (VAR, ARIMA, Rational Expectations, etc.)
-  - `utils/`: Utilities for data preparation, estimation, optimization, and state space modeling
-- `test/`: Unit tests and example notebooks
-- `plots/`: Output plots and visualizations
-- `requirements.txt`: Python dependencies
-- `setup.py`: Installation script
+### State Space & Kalman Filtering
+- **State Space Models:** Build and update state space representations for time series and macro models.
+- **Kalman Filter & Smoother:** Perform filtering, smoothing, and likelihood evaluation for latent state estimation.
 
-## Getting Started
+### Deep Learning for Time Series
+- **N-BEATS:** Modern neural network architecture for interpretable, high-accuracy time series forecasting.
 
-1. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-2. Install the package:
-   ```
-   pip install .
-   ```
-3. Explore example notebooks in the `test/` directory.
+### Advanced Tools
+- **Optimization Algorithms:**
+  - Random Walk Metropolis (RWM) for Bayesian estimation (MCMC)
+  - Genetic Algorithms for global optimization
+  - Simulated Annealing for robust parameter search
+- **Priors:** Specify and customize prior distributions for Bayesian estimation.
+- **State-Space Updates:** Update state-space solutions for DSGE and time series models.
 
-## License
+---
 
-This project is licensed under the MIT License.
+## Installation
+
+Install Econometron via pip:
+
+```bash
+pip install econometron
+```
+
+Or clone/download the latest version from the [GitHub repository](https://github.com/Amineouerfelli/econometron):
+
+```bash
+git clone https://github.com/Amineouerfelli/econometron.git
+git install ./econometron
+```
+
+---
+
+## Example Usage
+
+### 1. VAR Model
+```python
+from econometron.Models.Base_Var import VAR
+import pandas as pd
+# df: DataFrame with columns ['date', 'interest', 'inflation', 'gdp']
+var_model = VAR(max_p=4, criterion='AIC', forecast_horizon=8, plot=True)
+var_model.fit(df, date_column='date', columns=['interest', 'inflation', 'gdp'])
+forecasts = var_model.predict()
+```
+
+### 2. DSGE Model (Linear Rational Expectations)
+```python
+from econometron.Models.Linear_RE import RE_model
+model = RE_model(equations, variables, exo_states, endo_states, parameters)
+solution = model.solve()
+```
+
+### 3. N-BEATS Time Series Forecasting
+```python
+from econometron.Models.n_beats import NBeatsModel, create_sliding_windows, normalize_data
+import scipy.io
+# Load data
+data = scipy.io.loadmat('Z.mat')["Z"][0, :]
+X, y = create_sliding_windows(data, input_size=100, forecast_horizon=20)
+X_norm, y_norm, mean, std = normalize_data(X, y)
+model = NBeatsModel(input_size=100, hidden_size=512, forecast_horizon=20, stack_configs=[...])
+model.fit(X_norm, y_norm, epochs=100, batch_size=32)
+```
+
+### 4. State Space & Kalman Filter
+
+---
+
+## 📚 Documentation & Notebooks
+- See econometron.netlify.app with full and example notebooks for detailed usage and examples.
+
+---
+
+## 🤝 Contributing
+Contributions, bug reports, and feature requests are welcome! Please open an issue or submit a pull request.
+
+---
+
+## 📄 License
+MIT License
+
+---
+
+## 📬 Contact
+For questions or support, contact :[mohamedamine.ouerfelli@outlook.com](mailto:mohamedamine.ouerfelli@outlook.com)
