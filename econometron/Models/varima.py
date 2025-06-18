@@ -10,7 +10,9 @@ from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from scipy.interpolate import interp1d
 from pandas.tseries.frequencies import to_offset
 
-def process_time_series(data, date_column=None, columns=None, max_diff=2, significance_level=0.05, plot=True):
+
+def process_time_series(data, date_column=None, columns=None, max_diff=2, significance_level=0.05, 
+                       plot=True, log_transform=False):
     """
     Process time series data: handle missing values, check stationarity, and visualize ACF/PACF.
     
@@ -21,6 +23,7 @@ def process_time_series(data, date_column=None, columns=None, max_diff=2, signif
     - max_diff: int, maximum differencing order
     - significance_level: float, p-value threshold for ADF test
     - plot: bool, whether to plot ACF/PACF
+    - log_transform: bool or list, whether to apply log transformation (True for all, list for specific columns)
     
     Returns:
     - dict: Results including stationarity status, differenced data, and ADF results
@@ -40,29 +43,49 @@ def process_time_series(data, date_column=None, columns=None, max_diff=2, signif
     if columns is None:
         columns = data.select_dtypes(include=[np.number]).columns
     
+    # Determine which columns to log transform
+    if log_transform is True:
+        log_columns = columns
+    elif isinstance(log_transform, list):
+        log_columns = [col for col in log_transform if col in columns]
+    else:
+        log_columns = []
+    
+    # Validate log transformation feasibility
+    for col in log_columns:
+        if (data[col] <= 0).any():
+            print(f"Warning: Column '{col}' contains non-positive values. Cannot apply log transformation.")
+            log_columns = [c for c in log_columns if c != col]
+    
+    # Apply log transformation
+    data_transformed = data.copy()
+    for col in log_columns:
+        data_transformed[col] = np.log(data[col])
+        print(f"Applied log transformation to column: {col}")
+    
     # Infer frequency if not set
-    if data.index.inferred_freq is None:
+    if data_transformed.index.inferred_freq is None:
         try:
-            data.index.freq = pd.infer_freq(data.index)
+            data_transformed.index.freq = pd.infer_freq(data_transformed.index)
         except:
             print("Could not infer frequency. Trying common frequencies...")
             common_freqs = ['M', 'Q', 'A', 'D']
             for freq in common_freqs:
                 try:
-                    data.index = pd.date_range(start=data.index[0], periods=len(data), freq=freq)
-                    data.index.freq = freq
+                    data_transformed.index = pd.date_range(start=data_transformed.index[0], periods=len(data_transformed), freq=freq)
+                    data_transformed.index.freq = freq
                     break
                 except:
                     continue
-            if data.index.inferred_freq is None:
+            if data_transformed.index.inferred_freq is None:
                 print("Setting to monthly frequency as fallback.")
-                data.index = pd.date_range(start=data.index[0], periods=len(data), freq='M')
+                data_transformed.index = pd.date_range(start=data_transformed.index[0], periods=len(data_transformed), freq='M')
     
     results = {}
     
     for col in columns:
         print(f"\nProcessing column: {col}")
-        series = data[col].copy()
+        series = data_transformed[col].copy()
         
         # Handle missing values
         if series.isna().any():
@@ -80,9 +103,14 @@ def process_time_series(data, date_column=None, columns=None, max_diff=2, signif
                                      index=series.index)
         
         # Initialize result dictionary for this column
-        results[col] = {'original': series, 'adf_results': {}, 'stationary': False}
+        results[col] = {
+            'original': series, 
+            'log_transformed': col in log_columns,
+            'adf_results': {}, 
+            'stationary': False
+        }
         
-        # ADF test on original series
+        # ADF test on original/transformed series
         adf_result = adfuller(series, autolag='AIC')
         results[col]['adf_results'][0] = {
             'p_value': adf_result[1],
@@ -119,17 +147,16 @@ def process_time_series(data, date_column=None, columns=None, max_diff=2, signif
             
             plt.subplot(121)
             plot_acf(results[col].get('differenced', series), lags=10, ax=plt.gca())
-            plt.title(f'ACF - {col}')
+            plt.title(f'ACF - {col}' + (' (log-transformed)' if col in log_columns else ''))
             
             plt.subplot(122)
             plot_pacf(results[col].get('differenced', series), lags=10, ax=plt.gca())
-            plt.title(f'PACF - {col}')
+            plt.title(f'PACF - {col}' + (' (log-transformed)' if col in log_columns else ''))
             
             plt.tight_layout()
             plt.show()
     
     return results
-
 class VARIMA:
     """
     Vector Autoregressive Integrated Moving Average (VARIMA) model class using MLE with gradient-based optimization.
@@ -822,3 +849,328 @@ class VARIMA:
             forecast_df[f'{col}_ci_upper'] = forecasts['ci_upper'][:, col_idx]
         
         return forecast_df
+    def plot_residuals(self):
+        """
+        Plot residual diagnostics including time series, ACF, histogram, and Q-Q plot.
+        """
+        if not self.fitted:
+            raise ValueError("Model must be fitted before plotting residuals.")
+        
+        residuals = self.best_model['residuals']
+        n_vars = len(self.columns)
+        
+        fig, axes = plt.subplots(n_vars, 4, figsize=(16, 4 * n_vars))
+        if n_vars == 1:
+            axes = axes.reshape(1, -1)
+        
+        for i, col in enumerate(self.columns):
+            resid = residuals[:, i]
+            
+            # Time series plot
+            axes[i, 0].plot(resid)
+            axes[i, 0].set_title(f'Residuals - {col}')
+            axes[i, 0].set_xlabel('Time')
+            axes[i, 0].set_ylabel('Residual')
+            axes[i, 0].grid(True, alpha=0.3)
+            
+            # ACF plot
+            max_lags = min(20, len(resid) // 4)
+            try:
+                acf_vals = acf(resid, nlags=max_lags, fft=False)
+                axes[i, 1].stem(range(len(acf_vals)), acf_vals)
+                axes[i, 1].axhline(y=0, color='k', linestyle='-', alpha=0.3)
+                axes[i, 1].axhline(y=1.96/np.sqrt(len(resid)), color='r', linestyle='--', alpha=0.5)
+                axes[i, 1].axhline(y=-1.96/np.sqrt(len(resid)), color='r', linestyle='--', alpha=0.5)
+                axes[i, 1].set_title(f'Residual ACF - {col}')
+                axes[i, 1].set_xlabel('Lag')
+                axes[i, 1].set_ylabel('ACF')
+                axes[i, 1].grid(True, alpha=0.3)
+            except:
+                axes[i, 1].text(0.5, 0.5, 'ACF computation failed', ha='center', va='center', transform=axes[i, 1].transAxes)
+            
+            # Histogram
+            axes[i, 2].hist(resid, bins=20, density=True, alpha=0.7, edgecolor='black')
+            # Overlay normal distribution
+            x = np.linspace(resid.min(), resid.max(), 100)
+            axes[i, 2].plot(x, (1/np.sqrt(2*np.pi*np.var(resid))) * np.exp(-0.5 * (x - np.mean(resid))**2 / np.var(resid)), 
+                        'r-', label='Normal')
+            axes[i, 2].set_title(f'Residual Distribution - {col}')
+            axes[i, 2].set_xlabel('Residual')
+            axes[i, 2].set_ylabel('Density')
+            axes[i, 2].legend()
+            axes[i, 2].grid(True, alpha=0.3)
+            
+            # Q-Q plot
+            from scipy import stats
+            stats.probplot(resid, dist="norm", plot=axes[i, 3])
+            axes[i, 3].set_title(f'Q-Q Plot - {col}')
+            axes[i, 3].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print residual statistics
+        print("\nResidual Diagnostics Summary:")
+        print("=" * 50)
+        for i, col in enumerate(self.columns):
+            resid = residuals[:, i]
+            diag = self.residual_diag_results[col]
+            
+            print(f"\n{col}:")
+            print(f"  Mean: {np.mean(resid):.6f}")
+            print(f"  Std Dev: {np.std(resid):.6f}")
+            print(f"  Skewness: {stats.skew(resid):.4f}")
+            print(f"  Kurtosis: {stats.kurtosis(resid):.4f}")
+            print(f"  Ljung-Box Test: Statistic = {diag['ljung_box']['statistic']:.4f}, p-value = {diag['ljung_box']['p_value']:.4f}")
+            print(f"  Shapiro-Wilk Test: Statistic = {diag['shapiro_wilk']['statistic']:.4f}, p-value = {diag['shapiro_wilk']['p_value']:.4f}")
+            
+            # Interpretation
+            if diag['ljung_box']['p_value'] > 0.05:
+                print(f"  ✓ No significant autocorrelation detected")
+            else:
+                print(f"  ✗ Significant autocorrelation detected")
+                
+            if diag['shapiro_wilk']['p_value'] > 0.05:
+                print(f"  ✓ Residuals appear normally distributed")
+            else:
+                print(f"  ✗ Residuals may not be normally distributed")
+
+    def plot_forecast(self, h=None, include_history=True, history_periods=50):
+        """
+        Plot forecasts with confidence intervals.
+        
+        Parameters:
+        - h: Forecast horizon (defaults to self.forecast_horizon)
+        - include_history: bool, whether to include historical data
+        - history_periods: int, number of historical periods to show
+        """
+        if not self.fitted:
+            raise ValueError("Model must be fitted before plotting forecasts.")
+        
+        h = h or self.forecast_horizon
+        forecast_df = self.predict(h)
+        
+        n_vars = len(self.columns)
+        fig, axes = plt.subplots(n_vars, 1, figsize=(12, 4 * n_vars))
+        if n_vars == 1:
+            axes = [axes]
+        
+        for i, col in enumerate(self.columns):
+            ax = axes[i]
+            
+            # Historical data
+            if include_history:
+                hist_data = self.original_data[col].iloc[-history_periods:]
+                ax.plot(hist_data.index, hist_data.values, 'b-', label='Historical', linewidth=2)
+            
+            # Forecasts
+            forecast_values = forecast_df[col]
+            ci_lower = forecast_df[f'{col}_ci_lower']
+            ci_upper = forecast_df[f'{col}_ci_upper']
+            
+            ax.plot(forecast_df.index, forecast_values, 'r-', label='Forecast', linewidth=2)
+            ax.fill_between(forecast_df.index, ci_lower, ci_upper, alpha=0.3, color='red', label='95% CI')
+            
+            # Add vertical line at forecast start
+            if include_history:
+                ax.axvline(x=self.original_data.index[-1], color='black', linestyle='--', alpha=0.7, label='Forecast Start')
+            
+            ax.set_title(f'Forecast for {col}' + (' (log scale)' if self.stationarity_results[col].get('log_transformed', False) else ''))
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Value')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Add forecast statistics
+            mean_forecast = np.mean(forecast_values)
+            std_forecast = np.std(forecast_values)
+            ax.text(0.02, 0.98, f'Mean: {mean_forecast:.4f}\nStd: {std_forecast:.4f}', 
+                transform=ax.transAxes, verticalalignment='top', 
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print forecast summary
+        print("\nForecast Summary:")
+        print("=" * 50)
+        for col in self.columns:
+            forecast_values = forecast_df[col]
+            ci_lower = forecast_df[f'{col}_ci_lower']
+            ci_upper = forecast_df[f'{col}_ci_upper']
+            
+            print(f"\n{col}:")
+            print(f"  Mean Forecast: {np.mean(forecast_values):.4f}")
+            print(f"  Forecast Range: [{np.min(forecast_values):.4f}, {np.max(forecast_values):.4f}]")
+            print(f"  Average CI Width: {np.mean(ci_upper - ci_lower):.4f}")
+            if self.stationarity_results[col].get('log_transformed', False):
+                print(f"  Note: Values are in log scale")
+
+    def plot_diagnostics(self):
+        """
+        Comprehensive diagnostic plots including model fit, residuals, and stability checks.
+        """
+        if not self.fitted:
+            raise ValueError("Model must be fitted before plotting diagnostics.")
+        
+        # Create a large figure with multiple subplots
+        fig = plt.figure(figsize=(16, 12))
+        n_vars = len(self.columns)
+        
+        # Plot 1: Model Selection Criteria
+        if hasattr(self, 'all_results') and self.all_results:
+            ax1 = plt.subplot(3, 3, 1)
+            p_values = [result['p'] for result in self.all_results]
+            q_values = [result['q'] for result in self.all_results]
+            aic_values = [result['aic'] for result in self.all_results]
+            bic_values = [result['bic'] for result in self.all_results]
+            
+            # Create a scatter plot of AIC/BIC values
+            criterion_values = aic_values if self.criterion == 'AIC' else bic_values
+            scatter = ax1.scatter(p_values, q_values, c=criterion_values, cmap='viridis', s=100)
+            ax1.scatter(self.best_p, self.best_q, c='red', s=200, marker='*', label='Best Model')
+            ax1.set_xlabel('AR Order (p)')
+            ax1.set_ylabel('MA Order (q)')
+            ax1.set_title(f'Model Selection ({self.criterion})')
+            ax1.legend()
+            plt.colorbar(scatter, ax=ax1, label=self.criterion)
+            ax1.grid(True, alpha=0.3)
+        
+        # Plot 2: Coefficient Significance
+        ax2 = plt.subplot(3, 3, 2)
+        coef_data = []
+        coef_labels = []
+        for idx, row in self.coefficient_table.iterrows():
+            for col in self.columns:
+                if f'{col}_coef' in row:
+                    coef_data.append(row[f'{col}_coef'])
+                    coef_labels.append(f'{idx}_{col}')
+        
+        colors = ['red' if abs(coef) < 1.96 * 0.01 else 'blue' for coef in coef_data]  # Rough significance check
+        ax2.barh(range(len(coef_data)), coef_data, color=colors, alpha=0.7)
+        ax2.set_yticks(range(len(coef_data)))
+        ax2.set_yticklabels(coef_labels, fontsize=8)
+        ax2.set_xlabel('Coefficient Value')
+        ax2.set_title('Model Coefficients')
+        ax2.axvline(x=0, color='black', linestyle='-', alpha=0.3)
+        ax2.grid(True, alpha=0.3)
+        
+        # Plot 3: Residual Variance over Time
+        ax3 = plt.subplot(3, 3, 3)
+        residuals = self.best_model['residuals']
+        window_size = max(5, len(residuals) // 10)
+        for i, col in enumerate(self.columns):
+            resid = residuals[:, i]
+            rolling_var = pd.Series(resid).rolling(window=window_size).var()
+            ax3.plot(rolling_var, label=col, alpha=0.7)
+        ax3.set_title('Rolling Residual Variance')
+        ax3.set_xlabel('Time')
+        ax3.set_ylabel('Variance')
+        ax3.legend()
+        ax3.grid(True, alpha=0.3)
+        
+        # Plots 4-6: Individual variable diagnostics
+        for i, col in enumerate(self.columns[:3]):  # Limit to first 3 variables for space
+            ax = plt.subplot(3, 3, 4 + i)
+            
+            # Fitted vs Actual
+            fitted = self.best_model['fitted'][:, i]
+            actual = self.model_data[col].values[-len(fitted):]
+            
+            ax.scatter(actual, fitted, alpha=0.6)
+            min_val, max_val = min(np.min(actual), np.min(fitted)), max(np.max(actual), np.max(fitted))
+            ax.plot([min_val, max_val], [min_val, max_val], 'r--', alpha=0.8)
+            ax.set_xlabel('Actual')
+            ax.set_ylabel('Fitted')
+            ax.set_title(f'Fitted vs Actual - {col}')
+            ax.grid(True, alpha=0.3)
+            
+            # Calculate R-squared
+            ss_res = np.sum((actual - fitted) ** 2)
+            ss_tot = np.sum((actual - np.mean(actual)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+            ax.text(0.05, 0.95, f'R² = {r_squared:.3f}', transform=ax.transAxes, 
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # Plots 7-9: Residual Analysis by Variable
+        for i, col in enumerate(self.columns[:3]):
+            ax = plt.subplot(3, 3, 7 + i)
+            resid = residuals[:, i]
+            
+            # Standardized residuals
+            std_resid = resid / np.std(resid)
+            ax.plot(std_resid, 'o-', alpha=0.6, markersize=3)
+            ax.axhline(y=0, color='black', linestyle='-', alpha=0.3)
+            ax.axhline(y=2, color='red', linestyle='--', alpha=0.5, label='±2σ')
+            ax.axhline(y=-2, color='red', linestyle='--', alpha=0.5)
+            ax.set_title(f'Standardized Residuals - {col}')
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Std. Residual')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            # Count outliers
+            outliers = np.sum(np.abs(std_resid) > 2)
+            ax.text(0.05, 0.95, f'Outliers: {outliers}', transform=ax.transAxes,
+                bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print comprehensive diagnostic summary
+        print("\nComprehensive Model Diagnostics:")
+        print("=" * 60)
+        print(f"Best Model: VARIMA({self.best_p}, d, {self.best_q})")
+        print(f"Model Selection Criterion ({self.criterion}): {self.best_criterion_value:.4f}")
+        print(f"Number of Parameters: {self.coefficient_table.shape[0] * len(self.columns)}")
+        print(f"Sample Size: {self.model_data.shape[0]}")
+        
+        # Model fit statistics
+        print(f"\nModel Fit Statistics:")
+        for i, col in enumerate(self.columns):
+            fitted = self.best_model['fitted'][:, i]
+            actual = self.model_data[col].values[-len(fitted):]
+            
+            # Calculate various fit metrics
+            mse = np.mean((actual - fitted) ** 2)
+            rmse = np.sqrt(mse)
+            mae = np.mean(np.abs(actual - fitted))
+            mape = np.mean(np.abs((actual - fitted) / actual)) * 100 if np.all(actual != 0) else np.inf
+            
+            ss_res = np.sum((actual - fitted) ** 2)
+            ss_tot = np.sum((actual - np.mean(actual)) ** 2)
+            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
+            
+            print(f"  {col}:")
+            print(f"    R-squared: {r_squared:.4f}")
+            print(f"    RMSE: {rmse:.4f}")
+            print(f"    MAE: {mae:.4f}")
+            print(f"    MAPE: {mape:.2f}%")
+        
+        # Residual diagnostics summary
+        print(f"\nResidual Diagnostics Summary:")
+        all_ljung_box_ok = True
+        all_normality_ok = True
+        
+        for col in self.columns:
+            diag = self.residual_diag_results[col]
+            ljung_box_ok = diag['ljung_box']['p_value'] > 0.05
+            normality_ok = diag['shapiro_wilk']['p_value'] > 0.05
+            
+            if not ljung_box_ok:
+                all_ljung_box_ok = False
+            if not normality_ok:
+                all_normality_ok = False
+        
+        print(f"  Ljung-Box Test (No Autocorrelation): {'✓ PASS' if all_ljung_box_ok else '✗ FAIL'}")
+        print(f"  Shapiro-Wilk Test (Normality): {'✓ PASS' if all_normality_ok else '✗ FAIL'}")
+        
+        # Model stability check
+        print(f"\nModel Stability:")
+        if hasattr(self, 'best_model') and 'beta' in self.best_model:
+            max_coef = np.max(np.abs(self.best_model['beta']))
+            print(f"  Maximum coefficient magnitude: {max_coef:.4f}")
+            if max_coef < 1.0:
+                print(f"  ✓ Model appears stable (all coefficients < 1)")
+            else:
+                print(f"  ⚠ Model may be unstable (coefficients ≥ 1)")
