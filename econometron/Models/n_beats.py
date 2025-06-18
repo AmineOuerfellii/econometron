@@ -299,13 +299,6 @@ class NBeatsModel(nn.Module):
     def device(self):
         return next(self.parameters()).device
 
-def generate_synthetic_data(length, period=50):
-    t = np.linspace(0, length / period, length)
-    trend = 0.01 * t + 0.001 * t**2
-    seasonality = np.sin(2 * np.pi * t) + 0.5 * np.cos(4 * np.pi * t)
-    noise = np.random.randn(length) * 0.1
-    return trend + seasonality + noise
-
 def create_sliding_windows(data, input_size, forecast_horizon):
     X, y = [], []
     for i in range(len(data) - input_size - forecast_horizon + 1):

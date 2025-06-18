@@ -93,7 +93,7 @@ model.fit(X_norm, y_norm, epochs=100, batch_size=32)
 ---
 
 ## Documentation & Notebooks
-- See econometron.netlify.app with full and example notebooks for detailed usage and examples.
+- See [econometron.netlify.app](https://econometron.netlify.app) with full and example notebooks for detailed usage and examples.
 
 ---
 
