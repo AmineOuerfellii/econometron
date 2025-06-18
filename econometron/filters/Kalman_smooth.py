@@ -24,7 +24,6 @@ def kalman_smooth(y, update_state_space):
         smoothed state.
     """
     print("Running Kalman smoother...")
-    print(update_state_space)
     # Update state-space matrices
     ss_params = update_state_space
     # Run Kalman filter
