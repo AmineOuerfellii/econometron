@@ -19,6 +19,7 @@ if __name__ == "__main__":
             "matplotlib>=3.8.4",
             "statsmodels>=0.14.1",
             "sympy>=1.13.0",
+            "torch>=1.13.1",
             "colorama"
         ],
         classifiers=[

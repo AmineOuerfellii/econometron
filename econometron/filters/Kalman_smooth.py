@@ -1,7 +1,7 @@
 
 from . import Kalman
 
-def kal_smooth(params, fixed_params, param_names, y, update_state_space):
+def kalman_smooth(y, update_state_space):
     """
     Objective function for Kalman filter optimization.
 
@@ -23,13 +23,10 @@ def kal_smooth(params, fixed_params, param_names, y, update_state_space):
     float
         smoothed state.
     """
-    # Combine optimized and fixed parameters
-    full_params = fixed_params.copy()
-    for name, value in zip(param_names, params):
-        full_params[name] = value
-
+    print("Running Kalman smoother...")
+    print(update_state_space)
     # Update state-space matrices
-    ss_params = update_state_space(full_params)
+    ss_params = update_state_space
     # Run Kalman filter
     try:
         kalman = Kalman(ss_params)
@@ -38,6 +35,5 @@ def kal_smooth(params, fixed_params, param_names, y, update_state_space):
         return smooth_state
     except Exception as e:
         print("Error in kalman_smooth:")
-        print(f"Params: {params}")
         print(f"Exception: {e}")
         return None

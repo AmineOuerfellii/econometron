@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
-from scipy.stats import chi2, shapiro
-from statsmodels.tsa.stattools import acf, adfuller
+from scipy.stats import chi2, shapiro , jarque_bera
+from statsmodels.tsa.stattools import acf, adfuller 
 import matplotlib.pyplot as plt
 from itertools import product
 from econometron.utils.data_preparation import process_time_series
@@ -277,3 +277,205 @@ class VAR:
             forecast_df[f'{col}_ci_upper'] = forecasts['ci_upper'][:, col_idx]
         
         return forecast_df
+    def plot_forecasts(self, h=None, figsize=(12, 8)):
+        """
+        Plot forecasts with confidence intervals for all variables.
+        """
+        if not self.fitted:
+            raise ValueError("Model must be fitted before plotting forecasts.")
+        
+        h = h or self.forecast_horizon
+        forecasts = self.forecast(self.model_data.to_numpy(), self.best_model['beta'], self.best_p, h)
+        
+        # Create forecast dates
+        if isinstance(self.model_data.index, pd.DatetimeIndex):
+            forecast_dates = pd.date_range(
+                start=self.model_data.index[-1] + pd.Timedelta(days=1), 
+                periods=h, 
+                freq=self.model_data.index.freq or 'D'
+            )
+        else:
+            forecast_dates = range(len(self.model_data), len(self.model_data) + h)
+        
+        n_vars = len(self.columns)
+        n_cols = min(2, n_vars)
+        n_rows = (n_vars + n_cols - 1) // n_cols
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+        if n_vars == 1:
+            axes = [axes]
+        elif n_rows == 1:
+            axes = axes if n_vars > 1 else [axes]
+        else:
+            axes = axes.flatten()
+        
+        for i, col in enumerate(self.columns):
+            ax = axes[i]
+            
+            # Plot historical data (last 50 points for clarity)
+            hist_data = self.model_data[col].iloc[-50:]
+            ax.plot(hist_data.index, hist_data.values, 'b-', label='Historical', linewidth=1.5)
+            
+            # Plot forecasts
+            forecast_values = forecasts['point'][:, i]
+            ci_lower = forecasts['ci_lower'][:, i]
+            ci_upper = forecasts['ci_upper'][:, i]
+            
+            ax.plot(forecast_dates, forecast_values, 'r-', label='Forecast', linewidth=2)
+            ax.fill_between(forecast_dates, ci_lower, ci_upper, alpha=0.3, color='red', label='95% CI')
+            
+            ax.set_title(f'Forecast for {col}')
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Value')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+        
+        # Hide unused subplots
+        for j in range(n_vars, len(axes)):
+            axes[j].set_visible(False)
+        
+        plt.tight_layout()
+        plt.show()
+
+    def plot_residuals(self, figsize=(15, 10)):
+        """
+        Plot residuals analysis for all variables.
+        """
+        if not self.fitted:
+            raise ValueError("Model must be fitted before plotting residuals.")
+        
+        residuals = self.best_model['residuals']
+        n_vars = len(self.columns)
+        
+        fig, axes = plt.subplots(n_vars, 3, figsize=figsize)
+        if n_vars == 1:
+            axes = axes.reshape(1, -1)
+        
+        for i, col in enumerate(self.columns):
+            resid = residuals[:, i]
+            
+            # Time series plot of residuals
+            axes[i, 0].plot(resid, 'b-', linewidth=1)
+            axes[i, 0].axhline(y=0, color='r', linestyle='--', alpha=0.7)
+            axes[i, 0].set_title(f'Residuals - {col}')
+            axes[i, 0].set_xlabel('Time')
+            axes[i, 0].set_ylabel('Residual')
+            axes[i, 0].grid(True, alpha=0.3)
+            
+            # Histogram of residuals
+            axes[i, 1].hist(resid, bins=20, density=True, alpha=0.7, color='skyblue', edgecolor='black')
+            axes[i, 1].set_title(f'Residual Distribution - {col}')
+            axes[i, 1].set_xlabel('Residual Value')
+            axes[i, 1].set_ylabel('Density')
+            axes[i, 1].grid(True, alpha=0.3)
+            
+            # Q-Q plot
+            from scipy import stats
+            stats.probplot(resid, dist="norm", plot=axes[i, 2])
+            axes[i, 2].set_title(f'Q-Q Plot - {col}')
+            axes[i, 2].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+
+    def plot_diagnostics(self, figsize=(15, 12)):
+        """
+        Plot comprehensive diagnostic plots including ACF, PACF, and statistical tests.
+        """
+        if not self.fitted:
+            raise ValueError("Model must be fitted before plotting diagnostics.")
+        
+        residuals = self.best_model['residuals']
+        n_vars = len(self.columns)
+        
+        fig, axes = plt.subplots(n_vars, 4, figsize=figsize)
+        if n_vars == 1:
+            axes = axes.reshape(1, -1)
+        
+        for i, col in enumerate(self.columns):
+            resid = residuals[:, i]
+            
+            # ACF plot
+            from statsmodels.tsa.stattools import acf
+            from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+            
+            plot_acf(resid, lags=20, ax=axes[i, 0], title=f'ACF - {col}')
+            axes[i, 0].grid(True, alpha=0.3)
+            
+            # PACF plot
+            plot_pacf(resid, lags=20, ax=axes[i, 1], title=f'PACF - {col}')
+            axes[i, 1].grid(True, alpha=0.3)
+            
+            # Squared residuals (for heteroscedasticity)
+            axes[i, 2].plot(resid**2, 'g-', linewidth=1)
+            axes[i, 2].set_title(f'Squared Residuals - {col}')
+            axes[i, 2].set_xlabel('Time')
+            axes[i, 2].set_ylabel('Squared Residual')
+            axes[i, 2].grid(True, alpha=0.3)
+            
+            # Rolling statistics
+            window = min(20, len(resid)//4)
+            if window > 1:
+                rolling_mean = pd.Series(resid).rolling(window=window).mean()
+                rolling_std = pd.Series(resid).rolling(window=window).std()
+                
+                axes[i, 3].plot(rolling_mean, label='Rolling Mean', linewidth=2)
+                axes[i, 3].plot(rolling_std, label='Rolling Std', linewidth=2)
+                axes[i, 3].axhline(y=0, color='r', linestyle='--', alpha=0.7)
+                axes[i, 3].set_title(f'Rolling Statistics - {col}')
+                axes[i, 3].set_xlabel('Time')
+                axes[i, 3].set_ylabel('Value')
+                axes[i, 3].legend()
+                axes[i, 3].grid(True, alpha=0.3)
+            else:
+                axes[i, 3].text(0.5, 0.5, 'Insufficient data\nfor rolling stats', 
+                            ha='center', va='center', transform=axes[i, 3].transAxes)
+                axes[i, 3].set_title(f'Rolling Statistics - {col}')
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print diagnostic test results
+        print("\n" + "="*60)
+        print("DIAGNOSTIC TEST RESULTS")
+        print("="*60)
+        
+        for col in self.columns:
+            print(f"\n{col.upper()}:")
+            print("-" * 40)
+            
+            if col in self.residual_diag_results:
+                diag = self.residual_diag_results[col]
+                
+                print(f"Mean: {diag['mean']:.6f}")
+                print(f"Variance: {diag['variance']:.6f}")
+                
+                # Ljung-Box test
+                lb_stat = diag['ljung_box']['statistic']
+                lb_pval = diag['ljung_box']['p_value']
+                lb_result = "FAIL" if lb_pval < 0.05 else "PASS"
+                print(f"Ljung-Box Test: Stat={lb_stat:.4f}, p-value={lb_pval:.4f} [{lb_result}]")
+                
+                # Shapiro-Wilk test
+                sw_stat = diag['shapiro_wilk']['statistic']
+                sw_pval = diag['shapiro_wilk']['p_value']
+                sw_result = "FAIL" if sw_pval < 0.05 else "PASS"
+                print(f"Shapiro-Wilk Test: Stat={sw_stat:.4f}, p-value={sw_pval:.4f} [{sw_result}]")
+                
+                # Additional test: Jarque-Bera
+                resid = residuals[:, self.columns.index(col)]
+                try:
+                    jb_stat, jb_pval = jarque_bera(resid)
+                    jb_result = "FAIL" if jb_pval < 0.05 else "PASS"
+                    print(f"Jarque-Bera Test: Stat={jb_stat:.4f}, p-value={jb_pval:.4f} [{jb_result}]")
+                except:
+                    print("Jarque-Bera Test: Could not compute")
+        
+        print("\n" + "="*60)
+        print("TEST INTERPRETATION:")
+        print("PASS = Residuals satisfy the assumption (good)")
+        print("FAIL = Residuals violate the assumption (potential issue)")
+        print("Ljung-Box: Tests for autocorrelation (want p > 0.05)")
+        print("Shapiro-Wilk: Tests for normality (want p > 0.05)")
+        print("Jarque-Bera: Tests for normality (want p > 0.05)")
+        print("="*60)
