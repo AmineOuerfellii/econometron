@@ -1,13 +1,13 @@
 # Econometron
 
-**Econometron** is a Python library for building, simulating, and estimating dynamic and Timeseries models, with a focus on:
+**Econometron** is a Python library for building, simulating, and estimating dynamic and time series models, with a focus on:
 - **Dynamic Stochastic General Equilibrium (DSGE) models**
 - **Vector Autoregression (VAR) models**
 - **Vector Autoregression Integrated Moving Average (VARIMA) models**
 - **State space models and Kalman filtering**
 - **Deep learning time series (N-BEATS)**
 
-Econometron offers a modular, extensible architecture and a suite of tools for economists, researchers, and data scientists working in quantitative macroeconomics.
+Econometron provides a modular and extensible architecture for defining, estimating, and forecasting macroeconomic and time series models, including tools for simulation, optimization, filtering, and deep learning-based forecasting.
 
 ---
 
@@ -92,20 +92,20 @@ model.fit(X_norm, y_norm, epochs=100, batch_size=32)
 
 ---
 
-## 📚 Documentation & Notebooks
+## Documentation & Notebooks
 - See econometron.netlify.app with full and example notebooks for detailed usage and examples.
 
 ---
 
-## 🤝 Contributing
+## Contributing
 Contributions, bug reports, and feature requests are welcome! Please open an issue or submit a pull request.
 
 ---
 
-## 📄 License
+## License
 MIT License
 
 ---
 
-## 📬 Contact
+## Contact
 For questions or support, contact :[mohamedamine.ouerfelli@outlook.com](mailto:mohamedamine.ouerfelli@outlook.com)
