@@ -44,9 +44,11 @@ Econometron provides a modular and extensible architecture for defining, estimat
 
 Install Econometron via pip:
 
+NB : I'm currently Working on the PyPI package for a more stable Version, so please use the GitHub repository for the latest updates and features.
 ```bash
 pip install econometron
 ```
+
 
 Or clone/download the latest version from the [GitHub repository](https://github.com/Amineouerfelli/econometron):
 
