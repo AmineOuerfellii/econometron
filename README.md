@@ -50,12 +50,7 @@ pip install econometron
 ```
 
 
-Or clone/download the latest version from the [GitHub repository](https://github.com/Amineouerfelli/econometron):
-
-```bash
-git clone https://github.com/Amineouerfelli/econometron.git
-git install ./econometron
-```
+Or clone/download the latest version from the [GitHub repository](https://github.com/AmineOuerfellii/econometron/blob/main/dist/econometron-0.1.0.tar.gz):
 
 ---
 
