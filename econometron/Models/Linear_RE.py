@@ -424,7 +424,6 @@ class RE_model():
       B_mat = Matrix(eqs).jacobian(log_vars_t)
       C_mat = Matrix(eqs).jacobian(log_shocks)
 
-      
       # Set log deviations to zero for steady state evaluation
       log_subs = {Symbol(f"log_{var}_t"): 0 for var in ordered_vars}
       log_subs.update({Symbol(f"log_{var}_tp1"): 0 for var in ordered_vars})
@@ -436,17 +435,16 @@ class RE_model():
       A = np.array(A_mat.subs(log_subs), dtype=float)
       B = np.array(B_mat.subs(log_subs), dtype=float)
       C = np.array(C_mat.subs(log_subs), dtype=float)
-      
-    # Reorder rows
-    A = A[reorder_idx, :]
-    B = B[reorder_idx, :]
-    C = C[reorder_idx, :]
-    if debug==True:
-      print("Analytical Jacobian A (rows: variables, cols: [states, control]):\n", A_mat)
-      print("Analytical Jacobian B (rows: variables, cols: [states, control]):\n", B_mat)
-      print("Analytical Jacobian C (rows: variables, cols: shocks ", shocks, "):\n", C_mat)
-      if np.allclose(C, 0) and shocks:
-          print("Warning: C matrix is all zeros. Check shock specifications or _parse_equation method.")
+      # Reorder rows
+      A = A[reorder_idx, :]
+      B = B[reorder_idx, :]
+      C = C[reorder_idx, :]
+      if debug==True:
+        print("Analytical Jacobian A (rows: variables, cols: [states, control]):\n", A_mat)
+        print("Analytical Jacobian B (rows: variables, cols: [states, control]):\n", B_mat)
+        print("Analytical Jacobian C (rows: variables, cols: shocks ", shocks, "):\n", C_mat)
+        if np.allclose(C, 0) and shocks:
+            print("Warning: C matrix is all zeros. Check shock specifications or _parse_equation method.")
 
     return A, B, C
   def _approx_fprime(self, x, f, epsilon=None):

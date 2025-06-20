@@ -2,7 +2,7 @@ import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
 from .basis import ChebyshevBasis
-from .num_opt import NumericalOptimizer
+from .num_opt import Root
 
 class ProjectionSolver:
     def __init__(self, order_vector, lower_bounds, upper_bounds):
@@ -18,7 +18,7 @@ class ProjectionSolver:
             Upper bounds of the domain
         """
         self.cheb_basis = ChebyshevBasis(order_vector, lower_bounds, upper_bounds)
-        self.optimizer = NumericalOptimizer()
+        self.optimizer = Root()
         self.n_dims = len(order_vector)
         self.basis_size = np.prod(np.array(order_vector) + 1)
     

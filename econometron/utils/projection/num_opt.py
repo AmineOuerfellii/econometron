@@ -1,6 +1,6 @@
 import numpy as np
 
-class NumericalOptimizer:
+class Root:
     def compute_jacobian(self, func, x, n_outputs, eps=None):
         """Compute Jacobian matrix using central difference method.
         

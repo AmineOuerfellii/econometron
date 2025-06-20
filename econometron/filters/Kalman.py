@@ -134,7 +134,7 @@ class Kalman:
             Ztilde = y[:, [t]] - self.D @ x_t
             # Update
             Omega = self.D @ P_t@ self.D.T + self.R
-            # Check for NaNs/Infs in Omega
+            # Check for NaNs/Infs in Omiga
             if np.any(np.isnan(Omega)) or np.any(np.isinf(Omega)):
                 warnings.warn(f"NaN/Inf detected in innovation covariance Omega at time step {t}.", stacklevel=2)
                 # Assign a large penalty and break or skip
