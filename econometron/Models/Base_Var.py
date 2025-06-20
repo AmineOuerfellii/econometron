@@ -9,7 +9,7 @@ from econometron.utils.estimation.OLS import ols_estimator
 
 class VAR:
     """
-    Vector Autoregression (VAR) model class with OLS estimation.
+    Vector Autoregression (VAR) model class with OlS estimation.
     """
     def __init__(self, max_p=2, criterion='AIC', max_diff=2, significance_level=0.05, forecast_horizon=5, plot=True):
         """
@@ -330,7 +330,7 @@ class VAR:
             ax.legend()
             ax.grid(True, alpha=0.3)
         
-        # Hide unused subplots
+        # Hide unused sbplots
         for j in range(n_vars, len(axes)):
             axes[j].set_visible(False)
         

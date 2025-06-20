@@ -23,12 +23,12 @@ def kalman_objective(params, fixed_params, param_names, y, update_state_space):
     float
         Negative log-likelihood.
     """
-    # Combine optimized and fixed parameters
+    # Combine optimized and fixed/calibrated parameters
     full_params = fixed_params.copy()
     for name, value in zip(param_names, params):
         full_params[name] = value
 
-    # Run Kalman filter
+    # run Kalman filter
     try:
         ss_params = update_state_space(full_params)
         kalman = Kalman(ss_params)

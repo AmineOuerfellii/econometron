@@ -196,7 +196,7 @@ class RE_model():
       exo_ss_values = {}
       for var in self.exo_states:
               if hasattr(self, 'normalize') and var in self.normalize:
-                  # User-specified override always takes priority
+                  # specified override always takes priority
                   exo_ss_values[var] = float(self.normalize[var])
               elif self.steady_state is not None and var in self.steady_state:
                   exo_ss_values[var] = float(self.steady_state[var])
@@ -287,14 +287,14 @@ class RE_model():
     if self.steady_state is None:
       raise ValueError("Steady state not computed. Call compute_ss() first")
 
-    #Intialization of Matrices :
+    #Intialization of Matrices
     A = np.zeros((len(self.equations_list), len(ordered_vars)))
     B = np.zeros((len(self.equations_list), len(ordered_vars)))
     shocks = self.shocks if self.shocks else []
     C = np.zeros((len(self.equations_list), len(shocks)))
     if not shocks:
       print("Warning: No shocks identified. Check self.shock_names:", self.shocks)
-    # Steady-state substitution dictionary
+    # Steady state substitution dictionary
     subs = {Symbol(f"{var}_t"): self.steady_state[var] for var in ordered_vars}
     subs.update({Symbol(f"{var}_tp1"): self.steady_state[var] for var in ordered_vars})
     subs.update({Symbol(f"{shock}"): 0.0 for shock in shocks})
@@ -302,7 +302,7 @@ class RE_model():
 
 
     ######
-    # Map equations to variables
+    # Mapping of equations to variables
     eq_to_var = {}
     remaining_eqs = list(range(len(self.equations_list)))
     for i, eq in enumerate(self.equations_list):
@@ -387,7 +387,6 @@ class RE_model():
               expr = expr.subs(subs_log)
           else:
               # This is a level equation - needs log-linearization
-              # First substitute with steady state values for linearization point
               subs_ss = {}
               for var in ordered_vars:
                   subs_ss[Symbol(f"{var}_t")] = self.steady_state[var]
@@ -483,7 +482,7 @@ class RE_model():
           print("Warning: No shocks identified. Check self.shocks:", self.shocks)
           return A_num, B_num, C_num
       
-      # Map shock names to SymPy symbols
+      # Map shock names to symbols
       shock_symbols = {shock: Symbol(shock) for shock in shock_names}
       
       # Exclude shock names from parameters to avoid collision
@@ -607,7 +606,7 @@ class RE_model():
           B_num = self._approx_fprime(e_s, psi_cur)
           C_num = self._approx_fprime(np.zeros(len(shock_names)), psi_shocks)
           
-          # Debugging: Check residuals for perturbed shocks
+          # Check residuals for perturbed shocks
           if debug:
               for j, shock in enumerate(shock_names):
                   eps = 1e-6
