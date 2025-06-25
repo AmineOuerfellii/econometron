@@ -18,10 +18,10 @@ class Generic_Basis(nn.Module):
         self.b_f = nn.Parameter(torch.zeros(forecast_length))
         self.b_b = nn.Parameter(torch.zeros(backcast_length))
         ##
-        def forward(self,theta_b,theta_f):
-          forecast=torch.matmul(self.V_f,theta_f)+self.b_f
-          backcast=torch.matmul(self.V_b,theta_b)+self.b_b
-          return forecast,backcast
+    def forward(self,theta_b,theta_f):
+        forecast=torch.matmul(self.V_f,theta_f)+self.b_f
+        backcast=torch.matmul(self.V_b,theta_b)+self.b_b
+        return forecast,backcast
 
 class ChebyshevBasis(nn.Module):
     def __init__(self, backcast_length, forecast_length, degree=3):
