@@ -4,18 +4,24 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
 
-class GenericBasis(nn.Module):
-    def __init__(self, backcast_length, forecast_length):
-        super(GenericBasis, self).__init__()
-        self.backcast_length = backcast_length
-        self.forecast_length = forecast_length
-        self.forecast_basis = nn.Parameter(torch.randn(forecast_length, backcast_length + forecast_length) * 0.01)
-        self.backcast_basis = nn.Parameter(torch.randn(backcast_length, backcast_length + forecast_length) * 0.01)
-
-    def forward(self, theta):
-        forecast = torch.matmul(self.forecast_basis, theta.unsqueeze(-1)).squeeze(-1)
-        backcast = torch.matmul(self.backcast_basis, theta.unsqueeze(-1)).squeeze(-1)
-        return backcast, forecast
+class Generic_Basis(nn.Module):
+    def __init__(self, backcast_length,forecast_length):
+        super(Generic_Basis, self).__init__()
+        #y_Hat_{l}=V_{l}**f * theta_{l}**f
+        #x_Hat_{l}=V_{l}**b * theta_{l}**b
+        self.backcast_length=backcast_length
+        self.forecast_length=forecast_length
+        #V matrix
+        self.V_f = nn.Parameter(torch.randn(forecast_length,forecast_length) * 0.01)
+        self.V_b= nn.Parameter(torch.randn(backcast_length,backcast_length) * 0.01)
+        # Bias terms
+        self.b_f = nn.Parameter(torch.zeros(forecast_length))
+        self.b_b = nn.Parameter(torch.zeros(backcast_length))
+        ##
+        def forward(self,theta_b,theta_f):
+          forecast=torch.matmul(self.V_f,theta_f)+self.b_f
+          backcast=torch.matmul(self.V_b,theta_b)+self.b_b
+          return forecast,backcast
 
 class ChebyshevBasis(nn.Module):
     def __init__(self, backcast_length, forecast_length, degree=3):
