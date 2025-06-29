@@ -355,9 +355,9 @@ class LossCalculator:
         linear_loss = delta * residual - 0.5 * delta ** 2
         return torch.mean(torch.where(condition, squared_loss, linear_loss))
 
-class Neural_4cast:
+class NeuralForecast:
     """
-    Professional N-BEATS wrapper for time series forecasting
+    N-BEATS wrapper for time series forecasting
     
     Parameters:
     -----------
@@ -381,25 +381,18 @@ class Neural_4cast:
         self.backcast_length = backcast_length
         self.forecast_length = forecast_length
         self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-        
         # Initialize model
         self.model = N_beats(stack_configs, backcast_length, forecast_length)
         self.model.to(self.device)
-        
-        # Training history
         self.history = {
             'train_loss': [],
             'val_loss': [],
             'learning_rate': [],
             'epoch_times': []
         }
-        
-        # Model state
         self.is_trained = False
         self.scaler = None
         self.training_stats = {}
-        
-        # Loss functions mapping
         self.loss_functions = {
             'mse': LossCalculator.mse_loss,
             'mae': LossCalculator.mae_loss,
@@ -640,7 +633,7 @@ class Neural_4cast:
         forecast : np.ndarray
             Forecasted values
         components : dict (if return_components=True)
-            Individual stack contributions
+            Individual stack contributins
         """
         if not self.is_trained:
             raise ValueError("Model must be trained before forecasting")
@@ -716,7 +709,7 @@ class Neural_4cast:
             'parameters': {
                 'total': total_params,
                 'trainable': trainable_params,
-                'model_size_mb': total_params * 4 / (1024 * 1024)  # Assuming float32
+                'model_size_mb': total_params * 4 / (1024 * 1024) 
             },
             'training_stats': self.training_stats,
             'data_info': {
@@ -736,14 +729,13 @@ class Neural_4cast:
             
             if self.history['val_loss']:
                 stats['performance']['val_loss_improvement'] = (self.history['val_loss'][0] - self.history['val_loss'][-1]) / self.history['val_loss'][0] * 100
-        
+
         print("\n=== Training Statistics ===")
         print(f"Total parameters: {stats['parameters']['total']:,}")
         print(f"Model size: {stats['parameters']['model_size_mb']:.2f} MB")
         print(f"Training time: {stats['training_stats']['total_training_time']:.2f}s")
         print(f"Best train loss: {stats['training_stats']['best_train_loss']:.6f}")
         print(f"Best val loss: {stats['training_stats']['best_val_loss']:.6f}")
-
         return stats
     
     def plot_training_history(self, figsize: Tuple[int, int] = (15, 5)):
@@ -752,7 +744,6 @@ class Neural_4cast:
             print("Model not trained yet")
             return      
         fig, axes = plt.subplots(1, 3, figsize=figsize)        
-        # Loss plot
         axes[0].plot(self.history['train_loss'], label='Train Loss', color='blue')
         if self.history['val_loss']:
             axes[0].plot(self.history['val_loss'], label='Validation Loss', color='red')
@@ -761,14 +752,12 @@ class Neural_4cast:
         axes[0].set_ylabel('Loss')
         axes[0].legend()
         axes[0].grid(True, alpha=0.3)     
-        # Learning rate plot
         axes[1].plot(self.history['learning_rate'], color='green')
         axes[1].set_title('Learning Rate Schedule')
         axes[1].set_xlabel('Epoch')
         axes[1].set_ylabel('Learning Rate')
         axes[1].set_yscale('log')
         axes[1].grid(True, alpha=0.3)
-        # Epoch time plot
         axes[2].plot(self.history['epoch_times'], color='orange')
         axes[2].set_title('Epoch Training Time')
         axes[2].set_xlabel('Epoch')
@@ -823,8 +812,6 @@ class Neural_4cast:
         
         if forecast_data is not None:
             ax1.plot(forecast_time, forecast_data, label='True Future', color='green', linewidth=2, alpha=0.7)
-        
-        # Highlight the input sequence used for forecasting
         input_time = hist_time[-self.backcast_length:]
         ax1.fill_between(input_time, 
                         np.min(historical_data[-self.backcast_length:]), 
@@ -836,8 +823,6 @@ class Neural_4cast:
         ax1.set_ylabel('Value')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
-        
-        # Stack contributions plot
         if plot_components:
             colors = plt.cm.Set3(np.linspace(0, 1, len(components)))
             
@@ -888,13 +873,9 @@ class Neural_4cast:
                 pred = self.model(x).cpu().numpy().flatten()
                 predictions.extend(pred)
                 actuals.extend(y_test[i].numpy())
-        
-        # Denormalize if needed
         if self.scaler is not None:
             predictions = self.scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
             actuals = self.scaler.inverse_transform(np.array(actuals).reshape(-1, 1)).flatten()
-        
-        # Calculate metrics
         results = {}
         for metric in metrics:
             if metric == 'mae':
