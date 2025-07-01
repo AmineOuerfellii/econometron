@@ -1,14 +1,16 @@
+import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, TensorDataset
-from torch.optim.lr_scheduler import ReduceLROnPlateau, StepLR
+from torch import optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR ,StepLR
+from sklearn.model_selection import ParameterGrid
+from econometron.utils.data_preparation import  StandardScaler,mean_absolute_error, mean_squared_error,r2_score,root_mean_squared_error,mean_absolute_percentage_error
+from typing import Dict, List, Tuple,Union
 import time
-from typing import Dict, List, Tuple, Optional, Union
 import warnings
-from utils.data_preparation.scaler import StandardScaler, MinMaxScaler,mean_absolute_error, mean_squared_error
 
 class generic_basis(nn.Module):
     def __init__(self,backcast_length,forecast_length):
@@ -242,7 +244,7 @@ class N_beats_stack(nn.Module):
             forecast, backcast = block(residual)
             stack_forecast += forecast
             residual = residual - backcast    
-        return stack_forecast, backcast
+        return stack_forecast, residual
 class N_beats(nn.Module):
     def __init__(self, stack_configs, backcast_length, forecast_length):
         super(N_beats, self).__init__()
@@ -296,6 +298,34 @@ class N_beats(nn.Module):
                 stack_info['degree'] = config.get('degree', 3)
             info['stack_configs'].append(stack_info)
         return info
+class LossCalculator:
+    """Utility class for various loss functions"""
+    
+    @staticmethod
+    def mse_loss(y_true, y_pred):
+        return torch.mean((y_true - y_pred) ** 2)
+    
+    @staticmethod
+    def mae_loss(y_true, y_pred):
+        return torch.mean(torch.abs(y_true - y_pred))
+    
+    @staticmethod
+    def mape_loss(y_true, y_pred, epsilon=1e-8):
+        return torch.mean(torch.abs((y_true - y_pred) / (torch.abs(y_true) + epsilon))) * 100
+    
+    @staticmethod
+    def smape_loss(y_true, y_pred, epsilon=1e-8):
+        numerator = torch.abs(y_true - y_pred)
+        denominator = (torch.abs(y_true) + torch.abs(y_pred)) / 2 + epsilon
+        return torch.mean(numerator / denominator) * 100
+    
+    @staticmethod
+    def huber_loss(y_true, y_pred, delta=1.0):
+        residual = torch.abs(y_true - y_pred)
+        condition = residual < delta
+        squared_loss = 0.5 * residual ** 2
+        linear_loss = delta * residual - 0.5 * delta ** 2
+        return torch.mean(torch.where(condition, squared_loss, linear_loss))
 class EarlyStopping:
     """Early stopping utility class"""
     def __init__(self, patience=7, min_delta=0, restore_best_weights=True):
@@ -325,570 +355,667 @@ class EarlyStopping:
     
     def save_checkpoint(self, model):
         self.best_weights = model.state_dict().copy()
-
-class LossCalculator:
-    """Utility class for various loss functions"""
-    
-    @staticmethod
-    def mse_loss(y_true, y_pred):
-        return torch.mean((y_true - y_pred) ** 2)
-    
-    @staticmethod
-    def mae_loss(y_true, y_pred):
-        return torch.mean(torch.abs(y_true - y_pred))
-    
-    @staticmethod
-    def mape_loss(y_true, y_pred, epsilon=1e-8):
-        return torch.mean(torch.abs((y_true - y_pred) / (torch.abs(y_true) + epsilon))) * 100
-    
-    @staticmethod
-    def smape_loss(y_true, y_pred, epsilon=1e-8):
-        numerator = torch.abs(y_true - y_pred)
-        denominator = (torch.abs(y_true) + torch.abs(y_pred)) / 2 + epsilon
-        return torch.mean(numerator / denominator) * 100
-    
-    @staticmethod
-    def huber_loss(y_true, y_pred, delta=1.0):
-        residual = torch.abs(y_true - y_pred)
-        condition = residual < delta
-        squared_loss = 0.5 * residual ** 2
-        linear_loss = delta * residual - 0.5 * delta ** 2
-        return torch.mean(torch.where(condition, squared_loss, linear_loss))
-
 class NeuralForecast:
     """
-    N-BEATS wrapper for time series forecasting
-    
-    Parameters:
-    -----------
-    stack_configs : list
-        Configuration for each stack in the model
-    backcast_length : int
-        Length of input sequence
-    forecast_length : int
-        Length of forecast horizon
-    device : str, optional
-        Device to run the model on ('cpu' or 'cuda')
+    Complete forecasting framework for N-BEATS model
     """
     
-    def __init__(self, 
-                 stack_configs: List[Dict], 
-                 backcast_length: int, 
-                 forecast_length: int,
-                 device: str = None):
+    def __init__(self, stack_configs: List[Dict], backcast_length: int, forecast_length: int, device: str = None):
+        """
+        Initialize NeuralForecast
         
+        Args:
+            stack_configs: List of stack configurations for N-BEATS
+            backcast_length: Length of input sequence
+            forecast_length: Length of forecast horizon
+            device: Device to use ('cpu', 'cuda', or None for auto-detection)
+        """
         self.stack_configs = stack_configs
         self.backcast_length = backcast_length
         self.forecast_length = forecast_length
-        self.device = device or ('cuda' if torch.cuda.is_available() else 'cpu')
-        # Initialize model
-        self.model = N_beats(stack_configs, backcast_length, forecast_length)
-        self.model.to(self.device)
-        self.history = {
-            'train_loss': [],
-            'val_loss': [],
-            'learning_rate': [],
-            'epoch_times': []
-        }
-        self.is_trained = False
-        self.scaler = None
-        self.training_stats = {}
-        self.loss_functions = {
-            'mse': LossCalculator.mse_loss,
-            'mae': LossCalculator.mae_loss,
-            'mape': LossCalculator.mape_loss,
-            'smape': LossCalculator.smape_loss,
-            'huber': LossCalculator.huber_loss
-        }
         
-    def _prepare_data(self, data: np.ndarray, normalize: bool = True) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Prepare time series data for training"""
-        if normalize and self.scaler is None:
+        # Device setup
+        if device is None:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device(device)
+        
+        # Initialize model
+        self.model = N_beats(stack_configs, backcast_length, forecast_length).to(self.device)
+        
+        # Training attributes
+        self.history = {}
+        self.scaler = None
+        self.is_fitted = False
+        
+        print(f"NeuralForecast initialized on {self.device}")
+        print(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+    
+    def process_data(self, data: np.ndarray, train_ratio: float = 0.7, val_ratio: float = 0.15, 
+                     normalize: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Process time series data into train/val/test splits
+        
+        Args:
+            data: Input time series data
+            train_ratio: Ratio for training data
+            val_ratio: Ratio for validation data  
+            normalize: Whether to normalize the data
+            
+        Returns:
+            Tuple of (train_data, val_data, test_data)
+        """
+        if normalize:
             self.scaler = StandardScaler()
             data = self.scaler.fit_transform(data.reshape(-1, 1)).flatten()
-        elif normalize and self.scaler is not None:
-            data = self.scaler.transform(data.reshape(-1, 1)).flatten()
         
         # Create sequences
-        X, y = [], []
-        for i in range(len(data) - self.backcast_length - self.forecast_length + 1):
-            X.append(data[i:i + self.backcast_length])
-            y.append(data[i + self.backcast_length:i + self.backcast_length + self.forecast_length])
+        X, y = self._create_sequences(data, self.backcast_length, self.forecast_length)
         
-        return torch.tensor(X, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
+        # Split data
+        total_samples = len(X)
+        train_size = int(train_ratio * total_samples)
+        val_size = int(val_ratio * total_samples)
+        
+        X_train, y_train = X[:train_size], y[:train_size]
+        X_val, y_val = X[train_size:train_size+val_size], y[train_size:train_size+val_size]
+        X_test, y_test = X[train_size+val_size:], y[train_size+val_size:]
+        
+        # Convert to tensors and combine X,y
+        train_data = torch.FloatTensor(np.concatenate([X_train, y_train], axis=1))
+        val_data = torch.FloatTensor(np.concatenate([X_val, y_val], axis=1))
+        test_data = torch.FloatTensor(np.concatenate([X_test, y_test], axis=1))
+        
+        print(f"Data processed - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
+        
+        return train_data, val_data, test_data
     
-    def fit(self, 
-            train_data: np.ndarray,
-            val_data: Optional[np.ndarray] = None,
-            epochs: int = 100,
-            batch_size: int = 32,
-            learning_rate: float = 1e-3,
-            optimizer: str = 'adam',
-            loss_function: str = 'mse',
-            early_stopping: bool = True,
-            patience: int = 10,
-            normalize: bool = True,
-            scheduler: str = 'plateau',
-            gradient_clip: float = 1.0,
-            verbose: bool = True) -> Dict:
+    def _create_sequences(self, data: np.ndarray, backcast_length: int, forecast_length: int) -> Tuple[np.ndarray, np.ndarray]:
+        """Create input-output sequences from time series data"""
+        X, y = [], []
+        for i in range(len(data) - backcast_length - forecast_length + 1):
+            X.append(data[i:i+backcast_length])
+            y.append(data[i+backcast_length:i+backcast_length+forecast_length])
+        return np.array(X), np.array(y)
+    
+    def fit(self, train_data: torch.Tensor, val_data: torch.Tensor = None, epochs: int = 100,
+            batch_size: int = 32, learning_rate: float = 1e-3, optimizer: str = 'adam',
+            loss_function: str = 'mse', early_stopping: bool = False, patience: int = 10,
+            scheduler: str = None, gradient_clip: float = None, verbose: bool = True,
+            normalize: bool = False) -> Dict:
         """
         Train the N-BEATS model
         
-        Parameters:
-        -----------
-        train_data : np.ndarray
-            Training time series data
-        val_data : np.ndarray, optional
-            Validation time series data
-        epochs : int
-            Number of training epochs
-        batch_size : int
-            Batch size for training
-        learning_rate : float
-            Learning rate for optimizer
-        optimizer : str
-            Optimizer choice ('adam', 'adamw', 'sgd', 'rmsprop')
-        loss_function : str
-            Loss function ('mse', 'mae', 'mape', 'smape', 'huber')
-        early_stopping : bool
-            Whether to use early stopping
-        patience : int
-            Early stopping patience
-        normalize : bool
-            Whether to normalize the data
-        scheduler : str
-            Learning rate scheduler ('plateau', 'step', 'cosine')
-        gradient_clip : float
-            Gradient clipping value
-        verbose : bool
-            Whether to print training progress
+        Args:
+            train_data: Training data tensor (concatenated X and y)
+            val_data: Validation data tensor  
+            epochs: Number of training epochs
+            batch_size: Batch size for training
+            learning_rate: Learning rate
+            optimizer: Optimizer type ('adam', 'adamw', 'sgd')
+            loss_function: Loss function ('mse', 'mae', 'huber', 'mape', 'smape')
+            early_stopping: Whether to use early stopping
+            patience: Patience for early stopping
+            scheduler: Learning rate scheduler ('step', 'cosine', 'plateau')
+            gradient_clip: Gradient clipping value
+            verbose: Whether to print training progress
+            normalize: Whether to normalize data
+            
+        Returns:
+            Training history dictionary
         """
+        print("Starting training...")
         
-        # Prepare data
-        X_train, y_train = self._prepare_data(train_data, normalize)
-        train_dataset = TensorDataset(X_train, y_train)
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        # Setup data normalization
+        if normalize and self.scaler is None:
+            train_X = train_data[:, :self.backcast_length]
+            self.scaler = StandardScaler()
+            self.scaler.fit(train_X.numpy())
         
-        if val_data is not None:
-            X_val, y_val = self._prepare_data(val_data, normalize)
-            val_dataset = TensorDataset(X_val, y_val)
-            val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+        # Setup data loaders
+        train_loader = self._create_dataloader(train_data, batch_size, shuffle=True)
+        val_loader = self._create_dataloader(val_data, batch_size, shuffle=False) if val_data is not None else None
         
-        # Initialize optimizer
-        optimizers = {
-            'adam': torch.optim.Adam,
-            'adamw': torch.optim.AdamW,
-            'sgd': torch.optim.SGD,
-            'rmsprop': torch.optim.RMSprop
-        }
-        
-        if optimizer not in optimizers:
-            raise ValueError(f"Optimizer {optimizer} not supported. Choose from {list(optimizers.keys())}")
-        
-        if optimizer == 'sgd':
-            opt = optimizers[optimizer](self.model.parameters(), lr=learning_rate, momentum=0.9)
+        # Setup optimizer
+        if optimizer.lower() == 'adam':
+            opt = optim.Adam(self.model.parameters(), lr=learning_rate)
+        elif optimizer.lower() == 'adamw':
+            opt = optim.AdamW(self.model.parameters(), lr=learning_rate, weight_decay=1e-4)
+        elif optimizer.lower() == 'sgd':
+            opt = optim.SGD(self.model.parameters(), lr=learning_rate, momentum=0.9)
         else:
-            opt = optimizers[optimizer](self.model.parameters(), lr=learning_rate)
+            raise ValueError(f"Unknown optimizer: {optimizer}")
         
-        # Initialize scheduler
-        if scheduler == 'plateau':
-            sched = ReduceLROnPlateau(opt, mode='min', patience=patience//2, factor=0.5)
-        elif scheduler == 'step':
-            sched = StepLR(opt, step_size=epochs//4, gamma=0.5)
-        elif scheduler == 'cosine':
-            sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs)
-        else:
-            sched = None
+        # Setup loss function
+        loss_fn = self._get_loss_function(loss_function)
         
-        # Initialize loss function
-        if loss_function not in self.loss_functions:
-            raise ValueError(f"Loss function {loss_function} not supported. Choose from {list(self.loss_functions.keys())}")
+        # Setup scheduler
+        scheduler_obj = None
+        if scheduler:
+            if scheduler.lower() == 'step':
+                scheduler_obj = StepLR(opt, step_size=30, gamma=0.5)
+            elif scheduler.lower() == 'cosine':
+                scheduler_obj = CosineAnnealingLR(opt, T_max=epochs)
+            elif scheduler.lower() == 'plateau':
+                scheduler_obj = ReduceLROnPlateau(opt, mode='min', patience=5, factor=0.5)
         
-        criterion = self.loss_functions[loss_function]
-        
-        # Initialize early stopping
-        early_stopper = EarlyStopping(patience=patience) if early_stopping else None
+        # Setup early stopping
+        early_stopping_obj = None
+        if early_stopping:
+            early_stopping_obj = EarlyStopping(patience=patience)
         
         # Training loop
-        self.history = {'train_loss': [], 'val_loss': [], 'learning_rate': [], 'epoch_times': []}
-        
-        start_time = time.time()
+        self.history = {'train_loss': [], 'val_loss': [], 'learning_rate': []}
+        best_val_loss = float('inf')
         
         for epoch in range(epochs):
-            epoch_start = time.time()
+            start_time = time.time()
             
             # Training phase
-            self.model.train()
-            train_loss = 0.0
-            train_batches = 0
-            
-            for batch_x, batch_y in train_loader:
-                batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                
-                opt.zero_grad()
-                predictions = self.model(batch_x)
-                loss = criterion(batch_y, predictions)
-                loss.backward()
-                
-                # Gradient clipping
-                if gradient_clip > 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), gradient_clip)
-                
-                opt.step()
-                
-                train_loss += loss.item()
-                train_batches += 1
-            
-            avg_train_loss = train_loss / train_batches
-            self.history['train_loss'].append(avg_train_loss)
+            train_loss = self._train_epoch(train_loader, opt, loss_fn, gradient_clip, normalize)
+            self.history['train_loss'].append(train_loss)
             
             # Validation phase
-            avg_val_loss = 0.0
-            if val_data is not None:
-                self.model.eval()
-                val_loss = 0.0
-                val_batches = 0
+            val_loss = None
+            if val_loader:
+                val_loss = self._validate_epoch(val_loader, loss_fn, normalize)
+                self.history['val_loss'].append(val_loss)
                 
-                with torch.no_grad():
-                    for batch_x, batch_y in val_loader:
-                        batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                        predictions = self.model(batch_x)
-                        loss = criterion(batch_y, predictions)
-                        val_loss += loss.item()
-                        val_batches += 1
-                
-                avg_val_loss = val_loss / val_batches
-                self.history['val_loss'].append(avg_val_loss)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
             
-            # Learning rate scheduling
-            if sched is not None:
-                if scheduler == 'plateau' and val_data is not None:
-                    sched.step(avg_val_loss)
-                elif scheduler != 'plateau':
-                    sched.step()
-            
-            # Record learning rate
+            # Learning rate tracking
             current_lr = opt.param_groups[0]['lr']
             self.history['learning_rate'].append(current_lr)
             
-            # Record epoch time
-            epoch_time = time.time() - epoch_start
-            self.history['epoch_times'].append(epoch_time)
-            
-            # Verbose output
-            if verbose and (epoch + 1) % 10 == 0:
-                if val_data is not None:
-                    print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.6f} - Val Loss: {avg_val_loss:.6f} - LR: {current_lr:.2e} - Time: {epoch_time:.2f}s")
+            # Scheduler step
+            if scheduler_obj:
+                if isinstance(scheduler_obj, ReduceLROnPlateau):
+                    scheduler_obj.step(val_loss if val_loss else train_loss)
                 else:
-                    print(f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.6f} - LR: {current_lr:.2e} - Time: {epoch_time:.2f}s")
+                    scheduler_obj.step()
             
-            # Early stopping
-            if early_stopper is not None and val_data is not None:
-                if early_stopper(avg_val_loss, self.model):
+            # Early stopping check
+            if early_stopping_obj and val_loss:
+                if early_stopping_obj(val_loss, self.model):
                     if verbose:
                         print(f"Early stopping at epoch {epoch+1}")
                     break
+            
+            # Progress logging
+            if verbose and (epoch + 1) % 10 == 0:
+                epoch_time = time.time() - start_time
+                val_msg = f", Val Loss: {val_loss:.6f}" if val_loss else ""
+                print(f"Epoch {epoch+1}/{epochs} - Train Loss: {train_loss:.6f}{val_msg}, "
+                      f"LR: {current_lr:.2e}, Time: {epoch_time:.2f}s")
         
-        total_time = time.time() - start_time
-        
-        # Store training statistics
-        self.training_stats = {
-            'total_epochs': len(self.history['train_loss']),
-            'best_train_loss': min(self.history['train_loss']),
-            'best_val_loss': min(self.history['val_loss']) if self.history['val_loss'] else None,
-            'total_training_time': total_time,
-            'avg_epoch_time': np.mean(self.history['epoch_times']),
-            'final_lr': self.history['learning_rate'][-1],
-            'optimizer': optimizer,
-            'loss_function': loss_function,
-            'batch_size': batch_size,
-            'gradient_clip': gradient_clip
-        }
-        
-        self.is_trained = True
-        
-        if verbose:
-            print(f"\nTraining completed in {total_time:.2f}s")
-            print(f"Best train loss: {self.training_stats['best_train_loss']:.6f}")
-            if self.training_stats['best_val_loss']:
-                print(f"Best val loss: {self.training_stats['best_val_loss']:.6f}")
+        self.is_fitted = True
+        print(f"Training completed! Best validation loss: {best_val_loss:.6f}")
         
         return self.history
     
-    def forecast(self, 
-                 input_sequence: np.ndarray,
-                 return_components: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, Dict]]:
+    def _create_dataloader(self, data: torch.Tensor, batch_size: int, shuffle: bool = False) -> DataLoader:
+        """Create DataLoader from data tensor"""
+        X = data[:, :self.backcast_length]
+        y = data[:, self.backcast_length:]
+        dataset = TensorDataset(X, y)
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+    
+    def _get_loss_function(self, loss_type: str):
+        """Get loss function by name"""
+        if loss_type.lower() == 'mse':
+            return LossCalculator.mse_loss
+        elif loss_type.lower() == 'mae':
+            return LossCalculator.mae_loss
+        elif loss_type.lower() == 'huber':
+            return LossCalculator.huber_loss
+        elif loss_type.lower() == 'mape':
+            return LossCalculator.mape_loss
+        elif loss_type.lower() == 'smape':
+            return LossCalculator.smape_loss
+        else:
+            raise ValueError(f"Unknown loss function: {loss_type}")
+    
+    def _train_epoch(self, train_loader: DataLoader, optimizer, loss_fn, gradient_clip: float = None, 
+                     normalize: bool = False) -> float:
+        """Train for one epoch"""
+        self.model.train()
+        total_loss = 0
+        
+        for batch_X, batch_y in train_loader:
+            batch_X, batch_y = batch_X.to(self.device), batch_y.to(self.device)
+            
+            if normalize and self.scaler:
+                batch_X = torch.tensor(self.scaler.transform(batch_X.cpu().numpy()), 
+                                     dtype=torch.float32, device=self.device)
+            
+            optimizer.zero_grad()
+            outputs = self.model(batch_X)
+            loss = loss_fn(batch_y, outputs)
+            loss.backward()
+            
+            if gradient_clip:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), gradient_clip)
+            
+            optimizer.step()
+            total_loss += loss.item()
+        
+        return total_loss / len(train_loader)
+    
+    def _validate_epoch(self, val_loader: DataLoader, loss_fn, normalize: bool = False) -> float:
+        """Validate for one epoch"""
+        self.model.eval()
+        total_loss = 0
+        
+        with torch.no_grad():
+            for batch_X, batch_y in val_loader:
+                batch_X, batch_y = batch_X.to(self.device), batch_y.to(self.device)
+                
+                if normalize and self.scaler:
+                    batch_X = torch.tensor(self.scaler.transform(batch_X.cpu().numpy()), 
+                                         dtype=torch.float32, device=self.device)
+                
+                outputs = self.model(batch_X)
+                loss = loss_fn(batch_y, outputs)
+                total_loss += loss.item()
+        
+        return total_loss / len(val_loader)
+    
+    def plot_training_history(self, figsize: Tuple[int, int] = (15, 5)):
+        """Plot training history"""
+        if not self.history:
+            print("No training history available. Train the model first.")
+            return
+        
+        fig, axes = plt.subplots(1, 3, figsize=figsize)
+        
+        # Plot losses
+        axes[0].plot(self.history['train_loss'], label='Train Loss', color='blue')
+        if self.history['val_loss']:
+            axes[0].plot(self.history['val_loss'], label='Val Loss', color='red')
+        axes[0].set_title('Training History')
+        axes[0].set_xlabel('Epoch')
+        axes[0].set_ylabel('Loss')
+        axes[0].legend()
+        axes[0].grid(True)
+        
+        # Plot learning rate
+        axes[1].plot(self.history['learning_rate'], color='green')
+        axes[1].set_title('Learning Rate')
+        axes[1].set_xlabel('Epoch')
+        axes[1].set_ylabel('Learning Rate')
+        axes[1].set_yscale('log')
+        axes[1].grid(True)
+        
+        # Plot loss ratio (if validation exists)
+        if self.history['val_loss']:
+            val_train_ratio = [v/t for v, t in zip(self.history['val_loss'], self.history['train_loss'])]
+            axes[2].plot(val_train_ratio, color='purple')
+            axes[2].set_title('Val/Train Loss Ratio')
+            axes[2].set_xlabel('Epoch')
+            axes[2].set_ylabel('Ratio')
+            axes[2].grid(True)
+        else:
+            axes[2].text(0.5, 0.5, 'No Validation Data', ha='center', va='center', transform=axes[2].transAxes)
+            axes[2].set_title('Validation Info')
+        
+        plt.tight_layout()
+        plt.show()
+    
+    def forecast(self, input_sequence: Union[np.ndarray, torch.Tensor], return_components: bool = False,
+                 plot_forecast: bool = False) -> Union[np.ndarray, Tuple[np.ndarray, Dict]]:
         """
-        Generate forecast for given input sequence
+        Generate forecast for input sequence
         
-        Parameters:
-        -----------
-        input_sequence : np.ndarray
-            Input sequence of length backcast_length
-        return_components : bool
-            Whether to return individual stack contributions
-        
+        Args:
+            input_sequence: Input sequence of length backcast_length
+            return_components: Whether to return stack components
+            plot_forecast: Whether to plot the forecast
+            
         Returns:
-        --------
-        forecast : np.ndarray
-            Forecasted values
-        components : dict (if return_components=True)
-            Individual stack contributins
+            Forecast array or tuple of (forecast, components)
         """
-        if not self.is_trained:
-            raise ValueError("Model must be trained before forecasting")
-        
-        if len(input_sequence) != self.backcast_length:
-            raise ValueError(f"Input sequence length must be {self.backcast_length}")
-        
-        # Normalize input if scaler was used
-        if self.scaler is not None:
-            input_sequence = self.scaler.transform(input_sequence.reshape(-1, 1)).flatten()
+        if not self.is_fitted:
+            warnings.warn("Model is not fitted. Please train the model first.")
         
         self.model.eval()
+        
+        # Prepare input
+        if isinstance(input_sequence, np.ndarray):
+            input_sequence = torch.FloatTensor(input_sequence)
+        
+        if len(input_sequence.shape) == 1:
+            input_sequence = input_sequence.unsqueeze(0)
+        
+        input_sequence = input_sequence.to(self.device)
+        
+        # Normalize if needed
+        if self.scaler:
+            input_np = input_sequence.cpu().numpy()
+            input_scaled = self.scaler.transform(input_np)
+            input_sequence = torch.tensor(input_scaled, dtype=torch.float32, device=self.device)
+        
         with torch.no_grad():
-            x = torch.tensor(input_sequence, dtype=torch.float32).unsqueeze(0).to(self.device)
-            
             if return_components:
                 # Get individual stack contributions
                 components = {}
-                residual = x
-                total_forecast = torch.zeros(1, self.forecast_length, device=self.device)
+                residual = input_sequence
+                total_forecast = torch.zeros(input_sequence.shape[0], self.forecast_length, device=self.device)
                 
                 for i, stack in enumerate(self.model.stacks):
                     stack_forecast, residual = stack(residual)
                     total_forecast += stack_forecast
                     
-                    # Denormalize if needed
-                    if self.scaler is not None:
-                        stack_contribution = self.scaler.inverse_transform(
-                            stack_forecast.squeeze().cpu().numpy().reshape(-1, 1)
-                        ).flatten()
-                    else:
-                        stack_contribution = stack_forecast.squeeze().cpu().numpy()
-                    
-                    stack_config = self.stack_configs[i]
-                    stack_name = f"Stack_{i+1}_{stack_config['basis_type']}"
-                    components[stack_name] = stack_contribution
+                    # Store component
+                    component_name = f"stack_{i}_{self.stack_configs[i]['basis_type']}"
+                    components[component_name] = stack_forecast.cpu().numpy()
                 
-                forecast = total_forecast.squeeze().cpu().numpy()
+                forecast = total_forecast.cpu().numpy()
             else:
-                forecast = self.model(x).squeeze().cpu().numpy()
+                forecast = self.model(input_sequence).cpu().numpy()
+                components = None
         
-        # Denormalize forecast
-        if self.scaler is not None:
-            forecast = self.scaler.inverse_transform(forecast.reshape(-1, 1)).flatten()
+        # Denormalize if needed
+        if self.scaler:
+            forecast_reshaped = forecast.reshape(-1, 1)
+            forecast_denorm = self.scaler.inverse_transform(forecast_reshaped)
+            forecast = forecast_denorm.reshape(forecast.shape)
+            
+            if components:
+                for key, comp in components.items():
+                    comp_reshaped = comp.reshape(-1, 1)
+                    comp_denorm = self.scaler.inverse_transform(comp_reshaped)
+                    components[key] = comp_denorm.reshape(comp.shape)
+        
+        if plot_forecast:
+            self._plot_single_forecast(input_sequence.cpu().numpy(), forecast, components)
         
         if return_components:
             return forecast, components
-        else:
-            return forecast
+        return forecast
     
-    def stats(self) -> Dict:
+    def plot_forecast(self, historical_data: np.ndarray, forecast_data: np.ndarray = None, 
+                      plot_components: bool = False, figsize: Tuple[int, int] = (15, 8)):
         """
-        Get comprehensive model and training statistics
+        Plot historical data with forecast
         
-        Returns:
-        --------
-        stats : dict
-            Complete statistics about the model and training
+        Args:
+            historical_data: Historical time series data
+            forecast_data: Actual future values for comparison (optional)
+            plot_components: Whether to plot stack components
+            figsize: Figure size
         """
-        if not self.is_trained:
-            return {"error": "Model not trained yet"}
-        
-        # Model architecture info
-        model_info = self.model.get_model_info()
-        
-        # Parameter count
-        total_params = sum(p.numel() for p in self.model.parameters())
-        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        
-        # Training statistics
-        stats = {
-            'model_architecture': model_info,
-            'parameters': {
-                'total': total_params,
-                'trainable': trainable_params,
-                'model_size_mb': total_params * 4 / (1024 * 1024) 
-            },
-            'training_stats': self.training_stats,
-            'data_info': {
-                'backcast_length': self.backcast_length,
-                'forecast_length': self.forecast_length,
-                'normalized': self.scaler is not None,
-                'device': self.device
-            }
-        }
-        
-        # Add training performance metrics
-        if self.history['train_loss']:
-            stats['performance'] = {
-                'train_loss_improvement': (self.history['train_loss'][0] - self.history['train_loss'][-1]) / self.history['train_loss'][0] * 100,
-                'convergence_rate': len(self.history['train_loss']) / self.training_stats['total_epochs']
-            }
-            
-            if self.history['val_loss']:
-                stats['performance']['val_loss_improvement'] = (self.history['val_loss'][0] - self.history['val_loss'][-1]) / self.history['val_loss'][0] * 100
-
-        print("\n=== Training Statistics ===")
-        print(f"Total parameters: {stats['parameters']['total']:,}")
-        print(f"Model size: {stats['parameters']['model_size_mb']:.2f} MB")
-        print(f"Training time: {stats['training_stats']['total_training_time']:.2f}s")
-        print(f"Best train loss: {stats['training_stats']['best_train_loss']:.6f}")
-        print(f"Best val loss: {stats['training_stats']['best_val_loss']:.6f}")
-        return stats
-    
-    def plot_training_history(self, figsize: Tuple[int, int] = (15, 5)):
-        """Plot training history"""
-        if not self.is_trained:
-            print("Model not trained yet")
-            return      
-        fig, axes = plt.subplots(1, 3, figsize=figsize)        
-        axes[0].plot(self.history['train_loss'], label='Train Loss', color='blue')
-        if self.history['val_loss']:
-            axes[0].plot(self.history['val_loss'], label='Validation Loss', color='red')
-        axes[0].set_title('Training and Validation Loss')
-        axes[0].set_xlabel('Epoch')
-        axes[0].set_ylabel('Loss')
-        axes[0].legend()
-        axes[0].grid(True, alpha=0.3)     
-        axes[1].plot(self.history['learning_rate'], color='green')
-        axes[1].set_title('Learning Rate Schedule')
-        axes[1].set_xlabel('Epoch')
-        axes[1].set_ylabel('Learning Rate')
-        axes[1].set_yscale('log')
-        axes[1].grid(True, alpha=0.3)
-        axes[2].plot(self.history['epoch_times'], color='orange')
-        axes[2].set_title('Epoch Training Time')
-        axes[2].set_xlabel('Epoch')
-        axes[2].set_ylabel('Time (seconds)')
-        axes[2].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.show()
-    
-    def plot_forecast(self, 
-                     historical_data: np.ndarray,
-                     forecast_data: Optional[np.ndarray] = None,
-                     plot_components: bool = True,
-                     figsize: Tuple[int, int] = (15, 8)):
-        """
-        Plot forecast with stack contributions
-        
-        Parameters:
-        -----------
-        historical_data : np.ndarray
-            Historical time series data (at least backcast_length points)
-        forecast_data : np.ndarray, optional
-            True future values for comparison
-        plot_components : bool
-            Whether to plot individual stack contributions
-        figsize : tuple
-            Figure size
-        """
-        if not self.is_trained:
-            print("Model must be trained before plotting forecast")
+        if not self.is_fitted:
+            print("Model is not fitted. Cannot generate forecast.")
             return
         
-        if len(historical_data) < self.backcast_length:
-            raise ValueError(f"Historical data must have at least {self.backcast_length} points")
+        # Get input sequence (last part of historical data)
+        input_sequence = historical_data[-self.backcast_length:]
         
-        # Get forecast and components
-        input_seq = historical_data[-self.backcast_length:]
-        forecast, components = self.forecast(input_seq, return_components=True)
+        # Generate forecast
+        forecast, components = self.forecast(input_sequence, return_components=True)
+        forecast = forecast.flatten()
         
         # Create time indices
         hist_time = np.arange(len(historical_data))
-        forecast_time = np.arange(len(historical_data), len(historical_data) + self.forecast_length)
+        forecast_time = np.arange(len(historical_data), len(historical_data) + len(forecast))
         
-        if plot_components:
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=figsize)
+        if plot_components and components:
+            # Create subplots for components
+            n_components = len(components)
+            fig, axes = plt.subplots(n_components + 1, 1, figsize=(figsize[0], figsize[1] * (n_components + 1)))
+            
+            if n_components == 1:
+                axes = [axes]
+            
+            # Main forecast plot
+            axes[0].plot(hist_time, historical_data, label='Historical', color='blue', alpha=0.7)
+            axes[0].plot(forecast_time, forecast, label='Forecast', color='red', linewidth=2)
+            
+            if forecast_data is not None:
+                axes[0].plot(forecast_time[:len(forecast_data)], forecast_data, 
+                           label='Actual', color='green', linewidth=2, linestyle='--')
+            
+            axes[0].axvline(x=len(historical_data)-1, color='black', linestyle=':', alpha=0.7)
+            axes[0].set_title('N-BEATS Forecast')
+            axes[0].legend()
+            axes[0].grid(True, alpha=0.3)
+            
+            # Component plots
+            for i, (name, component) in enumerate(components.items()):
+                axes[i+1].plot(forecast_time, component.flatten(), label=f'{name}', linewidth=2)
+                axes[i+1].set_title(f'Component: {name}')
+                axes[i+1].legend()
+                axes[i+1].grid(True, alpha=0.3)
+                
         else:
-            fig, ax1 = plt.subplots(1, 1, figsize=figsize)
-        
-        # Main forecast plot
-        ax1.plot(hist_time, historical_data, label='Historical', color='blue', linewidth=2)
-        ax1.plot(forecast_time, forecast, label='Forecast', color='red', linewidth=2, linestyle='--')
-        
-        if forecast_data is not None:
-            ax1.plot(forecast_time, forecast_data, label='True Future', color='green', linewidth=2, alpha=0.7)
-        input_time = hist_time[-self.backcast_length:]
-        ax1.fill_between(input_time, 
-                        np.min(historical_data[-self.backcast_length:]), 
-                        np.max(historical_data[-self.backcast_length:]), 
-                        alpha=0.2, color='yellow', label='Input Sequence')
-        
-        ax1.set_title('N-BEATS Forecast')
-        ax1.set_xlabel('Time')
-        ax1.set_ylabel('Value')
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        if plot_components:
-            colors = plt.cm.Set3(np.linspace(0, 1, len(components)))
+            # Simple forecast plot
+            plt.figure(figsize=figsize)
+            plt.plot(hist_time, historical_data, label='Historical', color='blue', alpha=0.7)
+            plt.plot(forecast_time, forecast, label='Forecast', color='red', linewidth=2)
             
-            for i, (stack_name, contribution) in enumerate(components.items()):
-                ax2.plot(forecast_time, contribution, label=stack_name, 
-                        color=colors[i], linewidth=2, marker='o', markersize=4)
+            if forecast_data is not None:
+                plt.plot(forecast_time[:len(forecast_data)], forecast_data, 
+                        label='Actual', color='green', linewidth=2, linestyle='--')
             
-            ax2.plot(forecast_time, forecast, label='Total Forecast', 
-                    color='black', linewidth=3, linestyle='--', alpha=0.8)
-            
-            ax2.set_title('Individual Stack Contributions')
-            ax2.set_xlabel('Time')
-            ax2.set_ylabel('Contribution')
-            ax2.legend()
-            ax2.grid(True, alpha=0.3)
+            plt.axvline(x=len(historical_data)-1, color='black', linestyle=':', alpha=0.7)
+            plt.title('N-BEATS Forecast')
+            plt.xlabel('Time')
+            plt.ylabel('Value')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
         
         plt.tight_layout()
         plt.show()
     
-    def evaluate(self, test_data: np.ndarray, metrics: List[str] = ['mae', 'mse', 'mape']) -> Dict:
+    def _plot_single_forecast(self, input_sequence: np.ndarray, forecast: np.ndarray, 
+                             components: Dict = None):
+        """Plot a single forecast"""
+        input_flat = input_sequence.flatten()
+        forecast_flat = forecast.flatten()
+        
+        # Time indices
+        input_time = np.arange(len(input_flat))
+        forecast_time = np.arange(len(input_flat), len(input_flat) + len(forecast_flat))
+        
+        plt.figure(figsize=(12, 6))
+        plt.plot(input_time, input_flat, label='Input Sequence', color='blue')
+        plt.plot(forecast_time, forecast_flat, label='Forecast', color='red', linewidth=2)
+        plt.axvline(x=len(input_flat)-1, color='black', linestyle=':', alpha=0.7)
+        plt.title('Forecast from Input Sequence')
+        plt.xlabel('Time')
+        plt.ylabel('Value')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.show()
+    
+    def evaluate(self, test_data: torch.Tensor, metrics: List[str] = ['mae', 'mse', 'rmse']) -> Dict:
         """
         Evaluate model on test data
         
-        Parameters:
-        -----------
-        test_data : np.ndarray
-            Test time series data
-        metrics : list
-            List of metrics to compute
-        
+        Args:
+            test_data: Test data tensor
+            metrics: List of metrics to compute
+            
         Returns:
-        --------
-        results : dict
-            Evaluation metrics
+            Dictionary of evaluation metrics
         """
-        if not self.is_trained:
-            raise ValueError("Model must be trained before evaluation")
-        
-        X_test, y_test = self._prepare_data(test_data, normalize=True)
+        if not self.is_fitted:
+            print("Model is not fitted. Please train the model first.")
+            return {}
         
         self.model.eval()
+        
+        # Prepare data
+        X_test = test_data[:, :self.backcast_length]
+        y_test = test_data[:, self.backcast_length:]
+        
+        # Generate predictions
         predictions = []
         actuals = []
         
         with torch.no_grad():
             for i in range(len(X_test)):
-                x = X_test[i:i+1].to(self.device)
-                pred = self.model(x).cpu().numpy().flatten()
-                predictions.extend(pred)
-                actuals.extend(y_test[i].numpy())
-        if self.scaler is not None:
-            predictions = self.scaler.inverse_transform(np.array(predictions).reshape(-1, 1)).flatten()
-            actuals = self.scaler.inverse_transform(np.array(actuals).reshape(-1, 1)).flatten()
+                input_seq = X_test[i:i+1].to(self.device)
+                
+                if self.scaler:
+                    input_np = input_seq.cpu().numpy()
+                    input_scaled = self.scaler.transform(input_np)
+                    input_seq = torch.tensor(input_scaled, dtype=torch.float32, device=self.device)
+                
+                pred = self.model(input_seq).cpu().numpy()
+                
+                if self.scaler:
+                    pred_reshaped = pred.reshape(-1, 1)
+                    pred_denorm = self.scaler.inverse_transform(pred_reshaped)
+                    pred = pred_denorm.reshape(pred.shape)
+                
+                predictions.append(pred.flatten())
+                actuals.append(y_test[i].numpy())
+        
+        predictions = np.array(predictions)
+        actuals = np.array(actuals)
+        
+        # Calculate metrics
         results = {}
+        
         for metric in metrics:
-            if metric == 'mae':
+            if metric.lower() == 'mae':
                 results['MAE'] = mean_absolute_error(actuals, predictions)
-            elif metric == 'mse':
+            elif metric.lower() == 'mse':
                 results['MSE'] = mean_squared_error(actuals, predictions)
-            elif metric == 'rmse':
-                results['RMSE'] = np.sqrt(mean_squared_error(actuals, predictions))
-            elif metric == 'mape':
-                results['MAPE'] = np.mean(np.abs((actuals - predictions) / (np.abs(actuals) + 1e-8))) * 100
-            elif metric == 'smape':
-                results['SMAPE'] = np.mean(2 * np.abs(actuals - predictions) / (np.abs(actuals) + np.abs(predictions) + 1e-8)) * 100
-        print("\n=== Evaluation Results ===")
+            elif metric.lower() == 'rmse':
+                results['RMSE'] = root_mean_squared_error(actuals, predictions)
+            elif metric.lower() == 'mape':
+                results['MAPE'] = mean_absolute_percentage_error(actuals, predictions)
+            elif metric.lower() == 'smape':
+                # SMAPE calculation
+                numerator = np.abs(actuals - predictions)
+                denominator = (np.abs(actuals) + np.abs(predictions)) / 2
+                results['SMAPE'] = np.mean(numerator / denominator) * 100
+            elif metric.lower() == 'r2':
+                results['R2'] = r2_score(actuals, predictions)
+        
+        # Print results
+        print("Evaluation Results:")
+        print("-" * 30)
         for metric, value in results.items():
-            print(f"{metric}: {value:.4f}")
+            print(f"{metric}: {value:.6f}")
+        
         return results
+    
+    def hyperparameter_finder(self, train_data: torch.Tensor, val_data: torch.Tensor,
+                             param_grid: Dict, max_trials: int = 10, epochs: int = 50) -> Dict:
+        """
+        Basic hyperparameter search
+        
+        Args:
+            train_data: Training data
+            val_data: Validation data
+            param_grid: Dictionary of parameters to search
+            max_trials: Maximum number of trials
+            epochs: Epochs per trial
+            
+        Returns:
+            Best parameters and results
+        """
+        print(f"Starting hyperparameter search with {max_trials} trials...")
+        
+        # Generate parameter combinations
+        param_combinations = list(ParameterGrid(param_grid))
+        
+        if len(param_combinations) > max_trials:
+            # Random sample if too many combinations
+            import random
+            param_combinations = random.sample(param_combinations, max_trials)
+        
+        best_score = float('inf')
+        best_params = None
+        results = []
+        
+        for i, params in enumerate(param_combinations):
+            print(f"\nTrial {i+1}/{len(param_combinations)}: {params}")
+            
+            try:
+                # Create new model instance
+                temp_model = NeuralForecast(
+                    stack_configs=self.stack_configs,
+                    backcast_length=self.backcast_length,
+                    forecast_length=self.forecast_length,
+                    device=self.device
+                )
+                
+                # Train with current parameters
+                history = temp_model.fit(
+                    train_data=train_data,
+                    val_data=val_data,
+                    epochs=epochs,
+                    verbose=False,
+                    **params
+                )
+                
+                # Get validation score
+                val_score = min(history['val_loss']) if history['val_loss'] else min(history['train_loss'])
+                
+                results.append({
+                    'params': params,
+                    'val_score': val_score,
+                    'history': history
+                })
+                
+                if val_score < best_score:
+                    best_score = val_score
+                    best_params = params
+                
+                print(f"Val Score: {val_score:.6f}")
+                
+            except Exception as e:
+                print(f"Trial failed: {e}")
+                continue
+        
+        print(f"\nBest parameters: {best_params}")
+        print(f"Best validation score: {best_score:.6f}")
+        
+        return {
+            'best_params': best_params,
+            'best_score': best_score,
+            'all_results': results
+        }
+    
+    def save_model(self, filepath: str):
+        """Save model state"""
+        torch.save({
+            'model_state_dict': self.model.state_dict(),
+            'stack_configs': self.stack_configs,
+            'backcast_length': self.backcast_length,
+            'forecast_length': self.forecast_length,
+            'scaler': self.scaler,
+            'history': self.history
+        }, filepath)
+        print(f"Model saved to {filepath}")
+    
+    def load_model(self, filepath: str):
+        """Load model state"""
+        checkpoint = torch.load(filepath, map_location=self.device)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.scaler = checkpoint.get('scaler')
+        self.history = checkpoint.get('history', {})
+        self.is_fitted = True
+        print(f"Model loaded from {filepath}")
+    
+    def get_model_summary(self) -> Dict:
+        """Get model summary information"""
+        total_params = sum(p.numel() for p in self.model.parameters())
+        trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        
+        summary = {
+            'model_info': self.model.get_model_info(),
+            'total_parameters': total_params,
+            'trainable_parameters': trainable_params,
+            'device': str(self.device),
+            'is_fitted': self.is_fitted,
+            'backcast_length': self.backcast_length,
+            'forecast_length': self.forecast_length
+        }
+        
+        return summary
