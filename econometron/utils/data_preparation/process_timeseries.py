@@ -1,355 +1,194 @@
 import pandas as pd
 import numpy as np
-from statsmodels.tsa.stattools import adfuller, kpss, acf, pacf
-from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
-from scipy.interpolate import interp1d
+from statsmodels.tsa.stattools import adfuller, acf, pacf
+from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.filters.hp_filter import hpfilter
 from scipy.stats import boxcox
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
 import matplotlib.pyplot as plt
-import warnings
-warnings.filterwarnings("ignore", category=UserWarning)  # Suppress KPSS warnings
 
 class TimeSeriesProcessor:
-    """
-    A class to process time series data: handle missing values, check stationarity,
-    apply transformations, scale data, detect optimal lags, and visualize results.
-    
-    Attributes:
-        data: pd.DataFrame, processed time series data
-        stationary: dict, stationarity status for each column
-        results: dict, detailed results including ADF/KPSS tests and transformations
-    """
-    
-    def __init__(self, data, date_column=None, columns=None, max_diff=2, 
-                 significance_level=0.05, plot=True, scale_type=None, max_lags=10,
-                 stationarization_type=None, preferred_freq=None):
+    def __init__(self, data, columns=None, method='diff', analysis=True, plot=False):
         """
-        Initialize the TimeSeriesProcessor.
-
-        Parameters:
-        - data: DataFrame or Series with time series data
-        - date_column: str, name of the date column (if DataFrame)
-        - columns: list, columns to analyze (if None, all numeric columns are used)
-        - max_diff: int, maximum differencing order (regular + seasonal)
-        - significance_level: float, p-value threshold for stationarity tests
-        - plot: bool, whether to plot series, ACF, and PACF
-        - scale_type: str, 'standard' or 'minmax' for feature scaling (None for no scaling)
-        - max_lags: int, maximum lags for ACF/PACF analysis
-        - stationarization_type: str, preferred transformation ('log', 'diff', 'seasonal_diff', 
-          'detrend', 'boxcox', 'log+diff')
-        - preferred_freq: str, user-specified frequency ('M', 'Q', 'A', 'D') if index has none
-        """
-        self._validate_data(data)
-        self.data = self._prepare_data(data, date_column, preferred_freq)
-        self.columns = columns if columns else self.data.select_dtypes(include=[np.number]).columns
-        self.max_diff = max_diff
-        self.significance_level = significance_level
-        self.plot = plot
-        self.scale_type = scale_type
-        self.max_lags = max_lags
-        self.stationarization_type = stationarization_type
-        self.stationary = {col: False for col in self.columns}
-        self.results = {col: {'original': None, 'adf_results': {}, 'kpss_results': {}, 
-                             'transformations': [], 'optimal_lag': None} 
-                        for col in self.columns}
-        self._process_columns()
-
-    def _validate_data(self, data):
-        """Check if all columns have the same length."""
-        if isinstance(data, pd.DataFrame):
-            lengths = [len(data[col]) for col in data.columns]
-            if len(set(lengths)) > 1:
-                raise ValueError("All columns must have the same length.")
-        elif isinstance(data, pd.Series):
-            pass
-        else:
-            raise ValueError("Input must be a pandas DataFrame or Series.")
-
-    def _prepare_data(self, data, date_column, preferred_freq):
-        """Prepare the input data by setting the index and inferring/setting frequency."""
-        if isinstance(data, pd.Series):
-            data = data.to_frame()
-        if date_column:
-            data = data.set_index(date_column)
-            if not pd.api.types.is_datetime64_any_dtype(data.index):
-                data.index = pd.to_datetime(data.index)
+        Initialize TimeSeriesProcessor.
         
-        # Infer or set frequency
-        inferred_freq = pd.infer_freq(data.index)
-        if inferred_freq:
-            data.index.freq = inferred_freq
-            print(f"Inferred frequency: {inferred_freq}")
-        elif preferred_freq:
-            try:
-                data.index = pd.date_range(start=data.index[0], periods=len(data), freq=preferred_freq)
-                data.index.freq = preferred_freq
-                print(f"Set user-specified frequency: {preferred_freq}")
-            except:
-                raise ValueError(f"Invalid preferred frequency: {preferred_freq}. Use 'M', 'Q', 'A', or 'D'.")
-        else:
-            print("No frequency inferred and no preferred frequency provided. Setting to monthly as fallback.")
-            data.index = pd.date_range(start=data.index[0], periods=len(data), freq='ME')
-            data.index.freq = 'ME'
-        return data
+        Parameters:
+        - data: pandas DataFrame or numpy array
+        - columns: list of column names to process (if None, all columns are processed)
+        - method: transformation method ('diff', 'log_diff', 'detrend', 'seasonal', 'boxcox', 'hodrick_prescott')
+        - analysis: bool, whether to perform stationarity analysis
+        - plot: bool, whether to generate ACF/PACF plots
+        """
+        self.data = pd.DataFrame(data, columns=columns) if isinstance(data, np.ndarray) else data
+        self.columns = columns if columns is not None else self.data.columns
+        self.method = method
+        self.analysis = analysis
+        self.plot = plot
+        self.stationary_info = {}
+        self.transformed_data = None
+        self.original_data = self.data.copy()
+        self.transform_params = {}  # Store parameters for inverse transformation
+        
+        if self.analysis:
+            self._analyze_stationarity()
 
-    def _impute_missing(self, series):
-        """Handle missing values using linear interpolation and extrapolation."""
-        if series.isna().any():
-            print(f"Found {series.isna().sum()} missing values")
-            series = series.interpolate(method='linear', limit_direction='both')
-            if series.isna().any():
-                non_na_idx = series.dropna().index
-                if len(non_na_idx) > 1:
-                    f = interp1d(non_na_idx.map(lambda x: x.timestamp()), series.dropna(),
-                                 fill_value='extrapolate')
-                    series = pd.Series(f(series.index.map(lambda x: x.timestamp())),
-                                      index=series.index)
+    def _check_stationarity(self, series, col_name):
+        """Perform ADF test to check stationarity."""
+        result = adfuller(series.dropna(), autolag='AIC')
+        is_stationary = result[1] < 0.05  # p-value < 0.05 indicates stationarity
+        self.stationary_info[col_name] = {
+            'is_stationary': is_stationary,
+            'p_value': result[1],
+            'adf_statistic': result[0],
+            'transformation_applied': None,
+            'order': 0
+        }
+        return is_stationary
+
+    def _apply_transformation(self, series, col_name):
+        """Apply specified transformation to make series stationary."""
+        original_series = series.copy()
+        order = 0
+        max_diff = 6 # Maximum differencing order
+
+        if self.method == 'diff':
+            while not self._check_stationarity(series, col_name) and order < max_diff:
+                series = series.diff().dropna()
+                order += 1
+            self.transform_params[col_name] = {'method': 'diff', 'order': order}
+            
+        elif self.method == 'log_diff':
+            series = np.log(series + 1e-10)  # Avoid log(0)
+            while not self._check_stationarity(series, col_name) and order < max_diff:
+                series = series.diff().dropna()
+                order += 1
+            self.transform_params[col_name] = {'method': 'log_diff', 'order': order}
+            
+        elif self.method == 'detrend':
+            series = series - series.rolling(window=12).mean()
+            self.transform_params[col_name] = {'method': 'detrend'}
+            
+        elif self.method == 'seasonal':
+            decomposition = seasonal_decompose(series, period=12, model='additive', extrapolate_trend='freq')
+            series = decomposition.resid
+            self.transform_params[col_name] = {'method': 'seasonal', 'trend': decomposition.trend, 'seasonal': decomposition.seasonal}
+            
+        elif self.method == 'boxcox':
+            series, lmbda = boxcox(series + 1e-10)  # Avoid zero
+            self.transform_params[col_name] = {'method': 'boxcox', 'lambda': lmbda}
+            
+        elif self.method == 'hodrick_prescott':
+            cycle, trend = hpfilter(series, lamb=1600)
+            series = cycle
+            self.transform_params[col_name] = {'method': 'hodrick_prescott', 'trend': trend}
+            
+        self.stationary_info[col_name]['transformation_applied'] = self.method
+        self.stationary_info[col_name]['order'] = order
         return series
 
-    def _adf_test(self, series, title=""):
-        """Perform ADF test and return results."""
-        result = adfuller(series.dropna(), autolag='AIC')
-        return {'p_value': result[1], 'statistic': result[0], 'critical_values': result[4]}
-
-    def _kpss_test(self, series, title=""):
-        """Perform KPSS test and return results."""
-        result = kpss(series.dropna(), regression='c', nlags='auto')
-        return {'p_value': result[1], 'statistic': result[0], 'critical_values': result[3]}
-
-    def _is_stationary(self, adf_result, kpss_result):
-        """Determine stationarity based on ADF and KPSS tests."""
-        return adf_result['p_value'] < self.significance_level and kpss_result['p_value'] > self.significance_level
-
-    def _detrend(self, series):
-        """Detrend series using linear or quadratic fit."""
-        x = np.arange(len(series))
-        coef = np.polyfit(x, series, 1)
-        trend = np.polyval(coef, x)
-        detrended = series - trend
-        if not self._is_stationary(self._adf_test(detrended), self._kpss_test(detrended)):
-            coef = np.polyfit(x, series, 2)
-            trend = np.polyval(coef, x)
-            detrended = series - trend
-        return detrended, 'detrend'
-
-    def _log_transform(self, series):
-        """Apply log transformation (handle non-positive values)."""
-        if (series <= 0).any():
-            print("Non-positive values detected. Shifting data for log transform.")
-            shift = abs(series.min()) + 1
-            series = series + shift
-        else:
-            shift = 0
-        return np.log(series), f'log (+{shift} if shifted)'
-
-    def _seasonal_diff(self, series, period):
-        """Apply seasonal differencing."""
-        return series.diff(period).dropna(), f'seasonal_diff (period={period})'
-
-    def _difference(self, series, order=1):
-        """Apply regular differencing."""
-        return series.diff(order).dropna(), f'diff (order={order})'
-
-    def _boxcox_transform(self, series):
-        """Apply Box-Cox transformation."""
-        if (series <= 0).any():
-            print("Non-positive values detected. Shifting data for Box-Cox.")
-            shift = abs(series.min()) + 1
-            series = series + shift
-        else:
-            shift = 0
-        transformed, lam = boxcox(series)
-        return pd.Series(transformed, index=series.index), f'boxcox (lambda={lam:.2f}, +{shift} if shifted)'
-
-    def _log_diff(self, series):
-        """Apply log transformation followed by differencing."""
-        log_series, log_label = self._log_transform(series)
-        diff_series, diff_label = self._difference(log_series)
-        return diff_series, f'{log_label}+{diff_label}'
-
-    def _scale_series(self, series):
-        """Apply feature scaling (standard or minmax)."""
-        if self.scale_type == 'standard':
-            scaler = StandardScaler()
-            scaled = scaler.fit_transform(series.values.reshape(-1, 1)).flatten()
-            return pd.Series(scaled, index=series.index), 'standard_scale'
-        elif self.scale_type == 'minmax':
-            scaler = MinMaxScaler()
-            scaled = scaler.fit_transform(series.values.reshape(-1, 1)).flatten()
-            return pd.Series(scaled, index=series.index), 'minmax_scale'
-        return series, None
-
-    def _find_optimal_lag(self, series):
-        """Determine optimal lag using PACF."""
-        pacf_vals, confint = pacf(series.dropna(), nlags=self.max_lags, alpha=0.05)
-        for lag in range(1, len(pacf_vals)):
-            if abs(pacf_vals[lag]) < confint[lag, 1] - pacf_vals[lag]:
-                return lag
-        return self.max_lags
-
-    def _process_column(self, col):
-        """Process a single column with transformations and stationarity checks."""
-        series = self.data[col].copy()
-        series = self._impute_missing(series)
-        self.results[col]['original'] = series
-        transformations = []
-
-        # Plot original series
-        if self.plot:
-            plt.figure(figsize=(10, 4))
-            plt.plot(series, label='Original')
-            plt.title(f'Original Series - {col}')
-            plt.legend()
-            plt.show()
-
-        # Check stationarity of original series
-        adf_result = self._adf_test(series, "Original")
-        kpss_result = self._kpss_test(series, "Original")
-        self.results[col]['adf_results'][0] = adf_result
-        self.results[col]['kpss_results'][0] = kpss_result
-
-        if self._is_stationary(adf_result, kpss_result):
-            print(f"{col} is stationary (ADF p-value: {adf_result['p_value']:.4f}, "
-                  f"KPSS p-value: {kpss_result['p_value']:.4f})")
-            self.stationary[col] = True
-            transformed_series = series
-        else:
-            print(f"{col} is not stationary (ADF p-value: {adf_result['p_value']:.4f}, "
-                  f"KPSS p-value: {kpss_result['p_value']:.4f})")
-            
-            # Define transformation options
-            transformation_map = {
-                'detrend': self._detrend,
-                'log': self._log_transform,
-                'log+diff': self._log_diff,
-                'boxcox': self._boxcox_transform,
-                'diff': self._difference
-            }
-            if self.data.index.inferred_freq:
-                period = {'ME': 12, 'Q': 4, 'A': 1, 'D': 7}.get(self.data.index.inferred_freq, 12)
-                transformation_map['seasonal_diff'] = lambda s: self._seasonal_diff(s, period)
-
-            # Apply user-specified transformation if provided
-            if self.stationarization_type and self.stationarization_type in transformation_map:
-                print(f"Applying user-specified transformation: {self.stationarization_type}")
-                transform = transformation_map[self.stationarization_type]
-                transformed_series, transform_label = transform(series)
-                transformations.append(transform_label)
-                adf_result = self._adf_test(transformed_series, self.stationarization_type)
-                kpss_result = self._kpss_test(transformed_series, self.stationarization_type)
-                self.results[col]['adf_results'][self.stationarization_type] = adf_result
-                self.results[col]['kpss_results'][self.stationarization_type] = kpss_result
-
-                if self._is_stationary(adf_result, kpss_result):
-                    print(f"{col} becomes stationary after {transform_label} "
-                          f"(ADF p-value: {adf_result['p_value']:.4f}, "
-                          f"KPSS p-value: {kpss_result['p_value']:.4f})")
-                    self.stationary[col] = True
-                else:
-                    print(f"{col} is not stationary after {transform_label} "
-                          f"(ADF p-value: {adf_result['p_value']:.4f}, "
-                          f"KPSS p-value: {kpss_result['p_value']:.4f})")
-                    # Try additional differencing if needed
-                    for diff_order in range(2, self.max_diff + 1):
-                        transformed_series, transform_label = self._difference(transformed_series, diff_order)
-                        transformations.append(transform_label)
-                        adf_result = self._adf_test(transformed_series, f'diff_order_{diff_order}')
-                        kpss_result = self._kpss_test(transformed_series, f'diff_order_{diff_order}')
-                        self.results[col]['adf_results'][diff_order] = adf_result
-                        self.results[col]['kpss_results'][diff_order] = kpss_result
-                        if self._is_stationary(adf_result, kpss_result):
-                            print(f"{col} becomes stationary after additional differencing {diff_order} "
-                                  f"(ADF p-value: {adf_result['p_value']:.4f}, "
-                                  f"KPSS p-value: {kpss_result['p_value']:.4f})")
-                            self.stationary[col] = True
-                            break
-            else:
-                # Try transformations in order of complexity
-                transformations_to_try = [
-                    ('detrend', self._detrend),
-                    ('log', self._log_transform),
-                    ('log+diff', self._log_diff),
-                    ('boxcox', self._boxcox_transform),
-                    ('diff', self._difference)
-                ]
-                if self.data.index.inferred_freq:
-                    period = {'M': 12, 'Q': 4, 'A': 1, 'D': 7}.get(self.data.index.inferred_freq, 12)
-                    transformations_to_try.insert(2, ('seasonal_diff', lambda s: self._seasonal_diff(s, period)))
-
-                for name, transform in transformations_to_try:
-                    transformed_series, transform_label = transform(series)
-                    transformations.append(transform_label)
-                    adf_result = self._adf_test(transformed_series, name)
-                    kpss_result = self._kpss_test(transformed_series, name)
-                    self.results[col]['adf_results'][name] = adf_result
-                    self.results[col]['kpss_results'][name] = kpss_result
-
-                    if self._is_stationary(adf_result, kpss_result):
-                        print(f"{col} becomes stationary after {transform_label} "
-                              f"(ADF p-value: {adf_result['p_value']:.4f}, "
-                              f"KPSS p-value: {kpss_result['p_value']:.4f})")
-                        self.stationary[col] = True
-                        break
-                else:
-                    for diff_order in range(2, self.max_diff + 1):
-                        transformed_series, transform_label = self._difference(transformed_series, diff_order)
-                        transformations.append(transform_label)
-                        adf_result = self._adf_test(transformed_series, f'diff_order_{diff_order}')
-                        kpss_result = self._kpss_test(transformed_series, f'diff_order_{diff_order}')
-                        self.results[col]['adf_results'][diff_order] = adf_result
-                        self.results[col]['kpss_results'][diff_order] = kpss_result
-                        if self._is_stationary(adf_result, kpss_result):
-                            print(f"{col} becomes stationary after additional differencing {diff_order} "
-                                  f"(ADF p-value: {adf_result['p_value']:.4f}, "
-                                  f"KPSS p-value: {kpss_result['p_value']:.4f})")
-                            self.stationary[col] = True
-                            break
-                    else:
-                        print(f"{col} is not stationary after maximum transformations.")
-
-        # Store transformed series
-        self.results[col]['differenced'] = transformed_series
-        self.results[col]['transformations'] = transformations
-
-        # Apply scaling if specified
-        if self.scale_type:
-            transformed_series, scale_label = self._scale_series(transformed_series)
-            if scale_label:
-                transformations.append(scale_label)
-                self.results[col]['differenced'] = transformed_series
-
-        # Determine optimal lag
-        self.results[col]['optimal_lag'] = self._find_optimal_lag(transformed_series)
-
-        # Plot transformed series and ACF/PACF
-        if self.plot and self.stationary[col]:
-            plt.figure(figsize=(12, 8))
-            plt.subplot(311)
-            plt.plot(transformed_series, label='Transformed')
-            plt.title(f'Transformed Series - {col} ({", ".join(transformations)})')
-            plt.legend()
-
-            plt.subplot(312)
-            plot_acf(transformed_series, lags=self.max_lags, ax=plt.gca())
-            plt.title(f'ACF - {col}')
-
-            plt.subplot(313)
-            plot_pacf(transformed_series, lags=self.max_lags, ax=plt.gca())
-            plt.title(f'PACF - {col} (Optimal lag: {self.results[col]["optimal_lag"]})')
-
-            plt.tight_layout()
-            plt.show()
-
-    def _process_columns(self):
-        """Process all specified columns."""
+    def _analyze_stationarity(self):
+        """Analyze stationarity for each column and apply transformations if needed."""
+        self.transformed_data = self.data.copy()
         for col in self.columns:
-            print(f"\nProcessing column: {col}")
-            self._process_column(col)
+            series = self.data[col].copy()
+            if not self._check_stationarity(series, col):
+                self.transformed_data[col] = self._apply_transformation(series, col)
+            
+            if self.plot:
+                self._plot_acf_pacf(self.transformed_data[col], col)
 
-    def get_results(self):
-        """Return the processing results."""
-        return self.results
+    def _plot_acf_pacf(self, series, col_name):
+        """Plot ACF and PACF for a given series."""
+        plt.figure(figsize=(12, 4))
+        
+        plt.subplot(121)
+        acf_vals = acf(series.dropna(), nlags=20)
+        plt.stem(acf_vals)
+        plt.title(f'ACF - {col_name}')
+        
+        plt.subplot(122)
+        pacf_vals = pacf(series.dropna(), nlags=20)
+        plt.stem(pacf_vals)
+        plt.title(f'PACF - {col_name}')
+        
+        plt.tight_layout()
+        plt.show()
 
-    def get_stationary_data(self):
-        """Return a DataFrame with stationary (transformed) series."""
-        return pd.DataFrame({col: self.results[col]['differenced'] for col in self.columns})
+    def get_stationarity_info(self):
+        """Return stationarity analysis results."""
+        return self.stationary_info
+
+    def get_transformed_data(self):
+        """Return transformed data."""
+        return self.transformed_data.dropna()
+
+    def untransform(self, data=None, column=None, method=None, **kwargs):
+        """
+        Inverse transform the data.
+        
+        Parameters:
+        - data: DataFrame or Series to untransform (if None, uses transformed_data)
+        - column: specific column to untransform (if None, untransform all)
+        - method: transformation method (if None, uses stored method)
+        - **kwargs: additional parameters (e.g., order, lambda, trend)
+        """
+        if data is None:
+            data = self.transformed_data.copy()
+        else:
+            data = pd.DataFrame(data) if isinstance(data, np.ndarray) else data.copy()
+
+        if column:
+            columns = [column]
+        else:
+            columns = self.columns
+
+        result = data.copy()
+        for col in columns:
+            if col not in self.transform_params:
+                continue
+                
+            params = self.transform_params.get(col, {})
+            method = method or params.get('method')
+            
+            if method == 'diff':
+                order = kwargs.get('order', params.get('order', 1))
+                result[col] = self._inverse_diff(data[col], order)
+                
+            elif method == 'log_diff':
+                order = kwargs.get('order', params.get('order', 1))
+                series = self._inverse_diff(data[col], order)
+                result[col] = np.exp(series)
+                
+            elif method == 'detrend':
+                result[col] = data[col] + self.original_data[col].rolling(window=12).mean()
+                
+            elif method == 'seasonal':
+                trend = kwargs.get('trend', params.get('trend'))
+                seasonal = kwargs.get('seasonal', params.get('seasonal'))
+                if trend is not None and seasonal is not None:
+                    result[col] = data[col] + trend + seasonal
+                    
+            elif method == 'boxcox':
+                lmbda = kwargs.get('lambda', params.get('lambda'))
+                if lmbda is not None:
+                    result[col] = self._inverse_boxcox(data[col], lmbda)
+                    
+            elif method == 'hodrick_prescott':
+                trend = kwargs.get('trend', params.get('trend'))
+                if trend is not None:
+                    result[col] = data[col] + trend
+                    
+        return result
+
+    def _inverse_diff(self, series, order):
+        """Inverse differencing transformation."""
+        result = series.copy()
+        for _ in range(order):
+            result = result.cumsum() + self.original_data[series.name].shift(1).fillna(0)
+        return result
+
+    def _inverse_boxcox(self, series, lmbda):
+        """Inverse Box-Cox transformation."""
+        if lmbda == 0:
+            return np.exp(series)
+        else:
+            return (series * lmbda + 1) ** (1 / lmbda)
