@@ -10,9 +10,7 @@ from statsmodels.stats.diagnostic import acorr_ljungbox ,het_arch ,breaks_cusumo
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-
-class VAR_:
+class VAR:
   def __init__(self,data,max_p=2,columns=None,criterion='AIC',forecast_horizon=10,plot=True,bootstrap_n=1000,ci_alpha=0.05,orth=False,check_stationarity=True,method=None,Threshold=0.8):
     self.data=data
     self.max_p=max_p
@@ -31,6 +29,7 @@ class VAR_:
     self.best_p=None
     self.best_criterion_value=None
     self.all_results=[]
+    self.roots=[]
     self._validate_the_data(data)
     if method=="EL_RAPIDO":
       print("="*30,"Fitting the model","="*30)
@@ -134,7 +133,6 @@ class VAR_:
   ### the Fit method
   def fit(self,columns=None,p=None):
     ###First let's see an verify if data are now stationnary:
-    s=1
     if np.all(list(self.stationarity_results.values())):
       pass 
     else:
@@ -159,9 +157,10 @@ class VAR_:
       raise ValueError(f"Insufficient observations ({T}) for max_p={self.max_p} with {K} variables.")
     self.best_criterion_value = float('inf')
     self.all_results = []
-    if p is not None and isinstance(p, int):
-        s=p
-        self.max_p=p
+    s=1
+    if p:
+          s=p
+          self.max_p=p
     for p in range(s,self.max_p+1):
       try:
         X,Y=self.lag_matrix(p)
@@ -237,6 +236,24 @@ class VAR_:
     else:
       raise ValueError("No valid VAR model")
    ########  
+  def _companion_matrix(self):
+      beta = self.best_model['beta'] 
+      K = len(self.columns)
+      p = self.best_model['p']
+      intercept_included = beta.shape[0] == K * p + 1
+      A = beta[1:] if intercept_included else beta 
+      try:
+          A = A.reshape(p, K, K).transpose(0, 2, 1) 
+      except ValueError as e:
+          raise ValueError(f"Cannot reshape beta into ({p}, {K}, {K}). Beta shape: {beta.shape}, A shape: {A.shape}") 
+      cm = np.zeros((K * p, K * p))
+      for i in range(p):
+          cm[:K, i * K:(i + 1) * K] = A[i]
+      if p > 1:
+          cm[K:, :-K] = np.eye(K * (p - 1))
+      eigvals = np.linalg.eigvals(cm)
+      stable = np.all(np.abs(eigvals) < 1 - 1e-6)
+      return cm, stable, eigvals
   def run_full_diagnosis(self, num_lags=8,plot=False,threshold=0.8):
     if not 0 <= threshold <= 1:
       raise ValueError("Threshold needs to be between 0 and 1")
@@ -256,6 +273,13 @@ class VAR_:
     # Warn if sample size is too small for Ljung-Box
     if resids.shape[0] < num_lags:
         print(f"Warning: Sample size ({resids.shape[0]}) < num_lags ({num_lags})")
+    ##=====================Stability=================================####
+    print("===================Stability===========================")
+    cm,stable,eigs=self._companion_matrix()
+    print(f"The VAR model is stable:{stable:.4f}")
+    Diagnosis['Final Stability Diagnosis'] = 'Stable' if stable else "Not Stable"
+    S_score= 2 if stable else 0
+    Diagnosis['Stability Score']=S_score
     ###==================Serial Correlation===========================####
     print("===================Serial COrrelation Tests===========================")
     ## Using Durbin-Watson and Ljung-Box
@@ -349,7 +373,7 @@ class VAR_:
     final_score = (Diagnosis['DW_score'] + Diagnosis['LB_score'] + 
                    Diagnosis['Autocorrelation_score'] + 
                    Diagnosis['Heteroscedasticity_score'] + 
-                   Diagnosis['Normality_score'] + structural_breaks_score) / 6
+                   Diagnosis['Normality_score'] + structural_breaks_score+S_score) / 7
     # Assign verdict based on threshold
     self.fitted = final_score >= threshold
     Diagnosis['Final_score'] = final_score
@@ -363,6 +387,7 @@ class VAR_:
         'R-squared': self.best_model.get('fullresults').get('R2', 'N/A'),
         'AIC': self.best_model.get('aic', 'N/A'),
         'BIC': self.best_model.get('bic', 'N/A'),
+        'Stability':f"{Diagnosis['Stability Score']:.4f}({Diagnosis['Final Stability Diagnosis']})",
         'DW Score': f"{Diagnosis['DW_score']:.4f} ({Diagnosis['DW_diagnosis']})",
         'LB Score': f"{Diagnosis['LB_score']:.4f} ({Diagnosis['LB_diagnosis']})",
         'Autocorrelation Score': f"{Diagnosis['Autocorrelation_score']:.4f} ({Diagnosis['Autocorrelation_diagnosis']})",
