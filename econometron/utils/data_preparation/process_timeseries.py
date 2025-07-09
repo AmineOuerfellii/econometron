@@ -7,6 +7,7 @@ from scipy.stats import boxcox
 import matplotlib.pyplot as plt
 
 class TimeSeriesProcessor:
+
     def __init__(self, data, columns=None, method='diff', analysis=True, plot=False):
         """
         Initialize TimeSeriesProcessor.
