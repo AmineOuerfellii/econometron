@@ -1,9 +1,8 @@
 import numpy as np
-import scipy as sp
 import matplotlib.pyplot as plt
 from .basis import ChebyshevBasis
 from econometron.utils.solver import nr_solve
-from econometron.utils.optimizers.optim import minimize_qn
+from econometron.utils.optimizers import minimize_qn
 
 class ProjectionSolver:
     def __init__(self, order_vector, lower_bounds, upper_bounds):

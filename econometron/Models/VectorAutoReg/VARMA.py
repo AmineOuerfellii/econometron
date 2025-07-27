@@ -1,11 +1,12 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from statsmodels.tsa.stattools import acf, durbin_watson
+from statsmodels.tsa.stattools import acf
+from statsmodels.stats.stattools import durbin_watson
 from sklearn.cross_decomposition import CCA
 from .VAR import VAR
 from econometron.utils.estimation.OLS import ols_estimator
-from econometron.utils.optimizers.optim import minimize_qn
+from econometron.utils.optimizers import minimize_qn
 from scipy.stats import chi2, norm ,jarque_bera, shapiro,probplot,multivariate_normal
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch,breaks_cusumolsresid
 from numpy.linalg import inv,eigvals,det,cholesky
@@ -17,7 +18,8 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class VARMA(VAR):
+
+class VARMA_(VAR):
   def __init__(self,data,max_p=5,max_q=5,columns=None,forecast_h=6,plot=True,check_stationarity=True,bootstrap_n=1000,criterion='AIC',structural_id=False,ci_alpha=0.05,Key=None,Threshold=0.8,orth=False):
     super().__init__(data,max_p,columns,criterion,forecast_h,plot,bootstrap_n,ci_alpha,orth,check_stationarity,Key,Threshold)
     self.max_q=max_q
@@ -34,6 +36,8 @@ class VARMA(VAR):
     self.AR_s=None
     self.MA_s=None
     self.coeff_table=pd.DataFrame()
+    self.Threshold=Threshold
+    self.forecast_h=forecast_h
   ########### 
   def kron_index(self,lag):
       T,K=self.data.shape
@@ -740,7 +744,7 @@ class VARMA(VAR):
         if p is None or q is None:
           raise ValueError("p and q must be specified in non-structural mode")
         if not (isinstance(p, int) and isinstance(q, int) and p >= 0 and q >= 0):
-          raise ValueError(f"p and q must be non-negative integers, got p={p}, q={q}")   
+          raise ValueError(f"p and q must be non-negative integers, got p={p}, q={q}") 
       estimates,vals=minimize_qn(par,lambda par:self.log_likelihood(par=par,LB=LB,UB=UB,structural_id=structural_id,PhiID=self.AR_s, ThetaID=self.MA_s, Kron_index=self.Kronind,p=p,q=q,enforce_sta_inver=enforce_sta_inver),verbose=output)
       Log_lik=vals[3]    
       ##Hessian computation
@@ -933,116 +937,7 @@ class VARMA(VAR):
                 'se_MA': se_MA,
                 'p': p,
                 'q':q}
-  def fit(self,p=None,q=None,output=True):
-    K=len(self.columns)
-    if p is not None and (not isinstance(p, int) or p < 0):
-      raise ValueError("p must be a non-negative integer.")
-    if q is not None and (not isinstance(q, int) or q < 0):
-      raise ValueError("q must be a non-negative integer.")
-    #suppose user init the VARMA with s_id=T and self.mode='general'=> 'no struct id':
-    if self.structural_id and self.key=='general':
-      user_input=input("Do you want to proceed with Structural Id? (Y/N): ").strip().upper()
-      if user_input == 'Y':
-        self.structural_id = True
-        self.mode = ''
-      elif user_input != 'N':
-        print("Defaulting to non-structural identification.")
-        self.structural_id = False 
-    ###initialisation:
-    if self.structural_id:
-      estims,s_e=self._ini_s1(output=output)
-      par, separ, lB, uB=self._prepare_for_est(estims,s_e,output)
-      results= self._estimate(par=par,LB=lB,UB=uB,p=p, q=q, structural_id=True,output=output)
-      self.best_model = {
-          'p': self.best_p, 
-          'q': self.best_q, 
-          'aic': results['aic'], 
-          'bic': results['bic'],
-          'MA/AR_l0': results['MA/AR_0'],
-          "AR": results['AR'], 
-          "MA": results['MA'], 
-          "se_L0": results['se_L0'], 
-          "se_AR": results['se_AR'], 
-          "se_MA": results['se_MA'],
-          'fitted': results['fitted'], 
-          'residuals': results['residuals'], 
-          'beta': results['estimates'],
-          'se': results['se'], 
-          'tvalue': results['tvalue'], 
-          'pvalue': results['pvalue']
-      }
-    else:
-      res=[]
-      def evls(p,q):
-        try:
-          estims,s_e=self._ini_s1(p=p,q=q,output=output)
-          #print(estims)
-          par, separ, lB, uB=self._prepare_for_est(estims,s_e,output)
-          resu=self._estimate(par=par,LB=lB,UB=uB,p=p, q=q, structural_id=False,output=output)
-          #print(resu)
-          return resu
-        except Exception as e:
-          logger.warning(f"Failed for p={p}, q={q}: {e}")
-          print(f"Failed for p={p}, q={q}: {e}")
-          return None
-      # Try special (0,1) and (1,0) cases first
-      res = []
-      for p, q in [(0, 1), (1, 0)]:
-          r = evls(p, q)
-          if r:
-              res.append(r)
-      # Now parallelize the rest
-      def safe_evls(p, q):
-          try:
-              r = evls(p, q)
-              return r
-          except Exception as e:
-              print(f"Failed for p={p}, q={q}: {e}")
-              return None
-      # result = Parallel(n_jobs=-1)(
-      #     delayed(safe_evls)(p, q)
-      #     for p in range(1, self.max_p + 1)
-      #     for q in range(1, self.max_q + 1)
-      #     if (p, q) not in [(0, 1), (1, 0)]
-      # )
-
-        
-      for p in range(1,self.max_p + 1):
-        for q in range(1,self.max_q + 1):
-          print(p,q)
-          result = evls(p, q)
-          res.append(result)
-      # ersults = [r for r in res if r is not None]
-      # print(ersults)
-      #Display formatted results
-      res= [r for r in res if r is not None]
-      # res += result
-      # Pick the best model
-      if res:
-          criterion_key = 'aic' if self.criterion.lower() == 'aic' else 'bic'
-          results= min(res, key=lambda x: x[criterion_key])
-          self.best_model = results
-          self.best_p=results['p']
-          self.best_q=results['q']
-      else:
-          self.best_model = None   
-      # if self.max_p >1 and self.max_q >1 :
-      #   result=Parallel(n_jobs=-1)(delayed(evls)(p,q) for p in range(1,self.max_p+1) for q in range(1,self.max_q+1))
-      #   if result:
-      #     criterion_key = 'aic' if self.criterion.lower() == 'aic' else 'bic'
-      #     results=min(result,key=lambda x:x[criterion_key])  
-      # else:
-      #   if p is not None and q is not None:
-      #     results=evls(p,q)
-      
-      # for p in range(1,self.max_p + 1):
-      #   for q in range(1,self.max_q + 1):
-      #     print(p,q)
-      #     result = evls(p, q)
-      #     res.append(result)
-      # ersults = [r for r in res if r is not None]
-      # print(ersults)
-      #Display formatted results
+  def display_results(self,results):
     strr='with structural identification:'if self.structural_id else ''
     print("=" * 90)
     if self.best_p==0:
@@ -1142,14 +1037,130 @@ class VARMA(VAR):
                   print(f"{param_name:<25} | {val:>12.6f} | {se_val:>12.6f} | {t_val:>10.4f} | {p_val:>10.4f}")
         print()
     print("=" * 90)
+  def fit(self,p=None,q=None,output=True):
+    K=len(self.columns)
+    if p is not None and (not isinstance(p, int) or p < 0):
+      raise ValueError("p must be a non-negative integer.")
+    if q is not None and (not isinstance(q, int) or q < 0):
+      raise ValueError("q must be a non-negative integer.")
+    #suppose user init the VARMA with s_id=T and self.mode='general'=> 'no struct id':
+    if self.structural_id and self.key=='general':
+      user_input=input("Do you want to proceed with Structural Id? (Y/N): ").strip().upper()
+      if user_input == 'Y':
+        self.structural_id = True
+        self.mode = ''
+      elif user_input != 'N':
+        print("Defaulting to non-structural identification.")
+        self.structural_id = False 
+    ###initialisation:
+    if self.structural_id:
+      estims,s_e=self._ini_s1(output=output)
+      par, separ, lB, uB=self._prepare_for_est(estims,s_e,output)
+      results= self._estimate(par=par,LB=lB,UB=uB,p=p, q=q, structural_id=True,output=output)
+      self.best_model = {
+          'p': self.best_p, 
+          'q': self.best_q, 
+          'aic': results['aic'], 
+          'bic': results['bic'],
+          'MA/AR_l0': results['MA/AR_0'],
+          "AR": results['AR'], 
+          "MA": results['MA'], 
+          "se_L0": results['se_L0'], 
+          "se_AR": results['se_AR'], 
+          "se_MA": results['se_MA'],
+          'fitted': results['fitted'], 
+          'residuals': results['residuals'], 
+          'beta': results['estimates'],
+          'se': results['se'], 
+          'tvalue': results['tvalue'], 
+          'pvalue': results['pvalue'],
+          'log_lik':results['log_lik']
+      }
+    else:
+      res=[]
+      def evls(p,q):
+        try:
+          estims,s_e=self._ini_s1(p=p,q=q,output=output)
+          #print(estims)
+          par, separ, lB, uB=self._prepare_for_est(estims,s_e,output)
+          resu=self._estimate(par=par,LB=lB,UB=uB,p=p, q=q, structural_id=False,output=output)
+          #print(resu)
+          return resu
+        except Exception as e:
+          logger.warning(f"Failed for p={p}, q={q}: {e}")
+          print(f"Failed for p={p}, q={q}: {e}")
+          return None
+      # Try special (0,1) and (1,0) cases first
+      res = []
+      for p, q in [(0, 1), (1, 0)]:
+          r = evls(p, q)
+          if r:
+              res.append(r)
+      # Now parallelize the rest
+      def safe_evls(p, q):
+          try:
+              r = evls(p, q)
+              return r
+          except Exception as e:
+              print(f"Failed for p={p}, q={q}: {e}")
+              return None
+      # result = Parallel(n_jobs=-1)(
+      #     delayed(safe_evls)(p, q)
+      #     for p in range(1, self.max_p + 1)
+      #     for q in range(1, self.max_q + 1)
+      #     if (p, q) not in [(0, 1), (1, 0)]
+      # )
+
+        
+      for p in range(1,self.max_p + 1):
+        for q in range(1,self.max_q + 1):
+          print(p,q)
+          result = evls(p, q)
+          res.append(result)
+      # ersults = [r for r in res if r is not None]
+      # print(ersults)
+      #Display formatted results
+      res= [r for r in res if r is not None]
+      # res += result
+      # Pick the best model
+      if res:
+          criterion_key = 'aic' if self.criterion.lower() == 'aic' else 'bic'
+          results= min(res, key=lambda x: x[criterion_key])
+          self.best_model = results
+          self.best_p=results['p']
+          self.best_q=results['q']
+      else:
+          self.best_model = None   
+      # if self.max_p >1 and self.max_q >1 :
+      #   result=Parallel(n_jobs=-1)(delayed(evls)(p,q) for p in range(1,self.max_p+1) for q in range(1,self.max_q+1))
+      #   if result:
+      #     criterion_key = 'aic' if self.criterion.lower() == 'aic' else 'bic'
+      #     results=min(result,key=lambda x:x[criterion_key])  
+      # else:
+      #   if p is not None and q is not None:
+      #     results=evls(p,q)
+      
+      # for p in range(1,self.max_p + 1):
+      #   for q in range(1,self.max_q + 1):
+      #     print(p,q)
+      #     result = evls(p, q)
+      #     res.append(result)
+      # ersults = [r for r in res if r is not None]
+      # print(ersults)
+      #Display formatted results
+
+
     if self.best_model:
       #check if the model passes :
-      self.run_full_diagnosis(plot=False,threshold=0.8)
+      if output:
+        self.display_results(results)
+      self.run_full_diagnosis(plot=output,threshold=self.Threshold)
       logger.info("Best Model: ")
       print(f"AIC: {self.best_model['aic']:.6f}")
       print(f"BIC: {self.best_model['bic']:.6f}")
       print(f'VARMA({self.best_p},{self.best_q})')
       if output:
+
         logger.info("Generating fitted vs actual plots")
         fitted = self.best_model['fitted']
         train_data = self.data.iloc[self.best_model['p']:]
@@ -1333,9 +1344,9 @@ class VARMA(VAR):
       Diagnosis['Verdict'] = 'Passed' if self.fitted else 'Failed'
       print("\n==================Diagnostic Summary=================")
       summary_table = {
-          'Estimation': 'Quasi-Newton' if self.structural_id else 'OLS',
+          'Estimation': 'Maximum log-Likelihood' if self.structural_id else 'OLS',
           'Model': f'VARMA({self.best_model["p"]},{self.best_model["q"]})',
-          'Log-Likelihood': self.best_model.get('log_Lik', 'N/A'),
+          'Log-Likelihood': self.best_model.get('log_lik', 'N/A'),
           'AIC': self.best_model.get('aic', 'N/A'),
           'BIC': self.best_model.get('bic', 'N/A'),
           'Stability': f"{Diagnosis['Stability Score']:.4f} ({Diagnosis['Final Stability Diagnosis']})",
