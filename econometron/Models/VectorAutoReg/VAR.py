@@ -1,9 +1,9 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from econometron.utils.estimation import ols_estimator
+from econometron.utils.estimation.OLS import ols_estimator
 from statsmodels.tsa.stattools import adfuller, kpss
-from statsmodels.stats.stattools import durbin_watson 
+from statsmodels.stats.stattools import durbin_watson
 from scipy.stats import shapiro, norm ,jarque_bera ,probplot,multivariate_normal
 import logging
 from statsmodels.stats.diagnostic import acorr_ljungbox ,het_arch ,breaks_cusumolsresid
@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class VAR:
-  def __init__(self,data,max_p=2,columns=None,criterion='AIC',forecast_horizon=10,plot=True,bootstrap_n=1000,ci_alpha=0.05,orth=False,check_stationarity=True,method=None,Threshold=0.8):
+  def __init__(self,data,max_p=2,columns=None,criterion='AIC',forecast_horizon=10,plot=True,bootstrap_n=1000,ci_alpha=0.05,orth=False,check_stationarity=True,Key=None,Threshold=0.8):
     self.data=data
     self.max_p=max_p
     self.criterion=criterion
@@ -25,13 +25,13 @@ class VAR:
     self.coeff_table=pd.DataFrame()
     ###
     self.fitted=False
-    self.best_model=None 
+    self.best_model=None
     self.best_p=None
     self.best_criterion_value=None
     self.all_results=[]
     self.roots=[]
     self._validate_the_data(data)
-    if method=="EL_RAPIDO":
+    if Key=="EL_RAPIDO":
       print("="*30,"Fitting the model","="*30)
       self.fit(columns)
       if self.fitted:
@@ -40,12 +40,72 @@ class VAR:
         self.predict(forecast_horizon, plot=plot, tol=1e-6)
         if bootstrap_n is not None:
           boots=True
-        print("="*30,"Impulse Responses ","="*30)  
+        print("="*30,"Impulse Responses ","="*30)
         self.impulse_res(h=forecast_horizon, orth=orth, bootstrap=boots, n_boot=bootstrap_n , plot=self.plot, tol=1e-6)
-        print("="*30,"FEVD ","="*30)  
+        print("="*30,"FEVD ","="*30)
         self.FEVD(h=forecast_horizon, plot=plot)
-        print("="*30,"Simulations ","="*30)  
+        print("="*30,"Simulations ","="*30)
         self.simulate(n_periods=100, plot=plot, tol=1e-6)
+    elif Key == 'SbS':
+        print("="*15, "Fitting the model based on the model initialization", "="*15)
+        self.fit(columns)
+        def choice(output=True):
+            user_input = input("Enter your criterion (AIC, BIC, HQIC): ")
+            if user_input.lower() in ['aic', 'bic', 'hqic']:
+                self.criterion = user_input.upper()
+                logger.info("="*15 + f" Order selection sorted by: {self.criterion} " + "="*15)
+                table = self.fit(columns, get_order=True)
+                if output:
+                    print(table)
+                return table
+            else:
+                logger.warning("Invalid criterion. Please choose AIC, BIC, or HQIC.")
+                return choice()
+
+        def fit_var(table, o=None):
+            try:
+                if o is None:
+                    o = int(input("Select VAR order (p): "))
+                if o in table.index:
+                    self.fit(p=o)
+                    print("Model refitted with p =", o)
+                else:
+                    logger.warning("Selected order not found in table.")
+            except Exception as e:
+                logger.warning("Error during VAR fitting: " + str(e))
+
+        def fitting_var():
+            user_input = input("Do you want to refit the model? (y/n): ")
+            if user_input.lower() == 'y':
+                user_input = input("Do you want to change the criterion? (y/n): ")
+                if user_input.lower() == 'y':
+                    tab = choice()
+                    fit_var(tab)
+                else:
+                    tab = self.fit(columns, get_order=True)
+                    print(tab)
+                    fit_var(tab)
+        # Step-by-step interactive fitting
+        fitting_var()
+        if self.fitted:
+          logger.info("The model is fitted")
+          response = input("Do you want to compute Impulse Responses? (y/n): ")
+          if response.lower() == "y":
+              print("="*30, "Impulse Responses", "="*30)
+              self.impulse_res(h=forecast_horizon, orth=orth, bootstrap=bootstrap_n is not None, n_boot=bootstrap_n, plot=plot, tol=1e-6)
+          response = input("Do you want to compute FEVD (Forecast Error Variance Decomposition)? ((y/n): ")
+          if response.lower() == "y":
+              print("="*30, "FEVD", "="*30)
+              self.FEVD(h=forecast_horizon, plot=plot)
+          response = input("Do you want to generate Forecasts? (y/n): ")
+          if response.lower() == "y":
+              print("="*30, "Forecast", "="*30)
+              self.predict(forecast_horizon, plot=plot, tol=1e-6)
+          response = input("Do you want to run a Simulation? (y/n): ")
+          if response.lower() == "y":
+              print("="*30, "Simulation", "="*30)
+              self.simulate(n_periods=100, plot=plot, tol=1e-6)
+
   #####################
   def _adf_test(self,series):
     try :
@@ -77,16 +137,16 @@ class VAR:
     lengths = [len(data[col]) for col in data.columns]
     if len(set(lengths)) > 1:
       raise ValueError("All columns must have the same length")
-    #####check for Nan Values 
+    #####check for Nan Values
     if any(data[col].isna().any() for col in data.columns):
       raise ValueError("Columns is entirely or contains NaN values")
     #==================Stationarity validation====================#
     if self.check_stationarity:
       print("Performing stationarity checks...")
       for col in self.data.columns:
-        series = self.data[col] 
+        series = self.data[col]
         adf_result = self._adf_test(series)
-        kpss_result = self._Kpss_test(series) # Corrected method name
+        kpss_result = self._Kpss_test(series)
         self.stationarity_results[col] = {'adf': adf_result,'kpss': kpss_result}
       for col in self.stationarity_results:
         print(f"\nColumn: {col}")
@@ -104,10 +164,8 @@ class VAR:
           raise ValueError("Data needs to be stationnary")
     else:
       print("Skipping stationarity checks - assuming data is stationary")
-
   #===================Getting to the Juicy part ==========================>>>>>>>
-
-  ### First as we do we start by defining the lag Matrix 
+  ### First as we do we start by defining the lag Matrix
   def lag_matrix(self,lags):
     data=self.data
     T,K=data.shape
@@ -123,18 +181,90 @@ class VAR:
       Y=data[lags:]
       return X,Y
   #### Now let's compute aic and Bic :
-  def _compute_aic_bic(self,Y,resids,K,P,T):
+  def _compute_aic_bic_hqic(self,Y,resids,K,P,T):
     resid_cov=np.cov(resids.T, bias=True)
+    #print('resids_cov',resid_cov)
     log_det=np.log(np.linalg.det(resid_cov + 1e-10 * np.eye(K)))
     n_params=K*(K*P+1)
-    aic=T*log_det+2*n_params
-    bic=T*log_det+n_params*np.log(T)
-    return aic,bic
+    #print(n_params)
+    hqic=log_det+2*np.log(np.log(T))*n_params/T
+    aic=log_det+2*n_params/T
+    bic=log_det+n_params*np.log(T)/T
+    return aic,bic,hqic
+  ###Build coeff table :
+  def build_and_display_coeff_table(self):
+    if self.best_model is None:
+        print("No model fitted. Cannot build coefficient table.")
+        return
+    beta = self.best_model['beta']
+    se = self.best_model['fullresults']['se']
+    z_values = self.best_model['fullresults']['z_values']
+    p_values = self.best_model['fullresults']['p_values']
+    var_names = self.columns if hasattr(self, 'columns') else [f"Var{i+1}" for i in range(len(self.data.columns))]
+    K = len(var_names)
+    for lag in range(self.best_p):
+        for j, var in enumerate(var_names):
+            for i, col in enumerate(var_names):
+                idx=lag*K+j
+                row_name = f'Lag_{lag+1}_{var}'
+                self.coeff_table.loc[row_name, f'{col}_coef'] = beta[idx, i]
+                self.coeff_table.loc[row_name, f'{col}_se'] = se[idx, i]
+                self.coeff_table.loc[row_name, f'{col}_z'] = z_values[idx, i]
+                self.coeff_table.loc[row_name, f'{col}_p'] = p_values[idx, i]
+    print("=" * 120)
+    print(f"VAR({self.best_p}) Coefficient Table")
+    print("=" * 120)
+    for lag in range(1, self.best_p + 1):
+        print(f"\nLag {lag} Parameters:")
+        print("-" * 100)
+        print(f"{'Variable':<15}", end="")
+        for col in var_names:
+            print(f"| {col+'_coef':<12} {col+'_se':<10} {col+'_t':<8} {col+'_p':<8}", end="")
+        print()
+        print("-" * 100)
+        for var in var_names:
+            row_name = f'Lag_{lag}_{var}'
+            if row_name in self.coeff_table.index:
+                print(f"{var:<15}", end="")
+                for col in var_names:
+                    coef = self.coeff_table.loc[row_name, f'{col}_coef']
+                    se = self.coeff_table.loc[row_name, f'{col}_se']
+                    t_val = self.coeff_table.loc[row_name, f'{col}_z']
+                    p_val = self.coeff_table.loc[row_name, f'{col}_p']
+                    print(f"| {coef:>10.4f} {se:>10.4f} {t_val:>8.4f} {p_val:>8.4f}", end="")
+                print()
+    
+    print("=" * 120)
+  ### order_select:
+  def order_select(self):
+    select_order_table=None
+    T,K=self.data.shape ## need to be coherant with the use of columns latter
+    ##K=len(self.columns)
+    for p in range(1,self.max_p+1):
+        X,Y=self.lag_matrix(p)
+        beta,fitted,resids,res=ols_estimator(X,Y)
+        aic,bic,hqic=self._compute_aic_bic_hqic(Y,resids,K,p,T)
+        self.all_results.append({
+          'p':p,
+          'beta':beta,
+          'fitted':fitted,
+          'residuals':resids,
+          'fullresults':res,
+          'aic':aic,
+          'bic':bic,
+          'hqic':hqic
+        })
+        
+    criterion= self.criterion.lower()
+    if criterion in ['aic', 'bic', 'hqic']:
+        select_order_table = pd.DataFrame(self.all_results)[['p', 'aic', 'bic', 'hqic']].sort_values(by=criterion).reset_index(drop=True)
+    return select_order_table
+    #### this test , so for now i'll keep it this way , although we can use this in the next func fit but for now let's keep it this way 
   ### the Fit method
-  def fit(self,columns=None,p=None):
+  def fit(self,columns=None,p=None,output=True,get_order=False):
     ###First let's see an verify if data are now stationnary:
     if np.all(list(self.stationarity_results.values())):
-      pass 
+      pass
     else:
       raise ValueError("Data needs to be stationnary")
     ### Now lets supose the user didn't enter any columns but the data contains some other types other numbers
@@ -147,8 +277,8 @@ class VAR:
     if set(columns)!=set(self.data.columns):
       raise ValueError("Some of The Columns don't exist in your data input")
     ### Now the selection criterion
-    if self.criterion not in ['AIC','BIC','aic','bic']:
-      raise ValueError("The criterion must be either AIC or BIC")
+    if self.criterion not in ['AIC','BIC','HQIC','aic','bic','hqic']:
+      raise ValueError("The criterion must be either AIC,BIC or HQIC")
     ###########
     self.columns=columns
     T, K = self.data.shape
@@ -159,13 +289,14 @@ class VAR:
     self.all_results = []
     s=1
     if p:
-          s=p
-          self.max_p=p
+      s=p
+      self.max_p=p
+    #print(s,self.max_p)
     for p in range(s,self.max_p+1):
       try:
         X,Y=self.lag_matrix(p)
         beta,fitted,resids,res=ols_estimator(X,Y)
-        aic,bic=self._compute_aic_bic(Y,resids,K,p,T)
+        aic,bic,hqic=self._compute_aic_bic_hqic(Y,resids,K,p,T)
         self.all_results.append({
           'p':p,
           'beta':beta,
@@ -173,84 +304,94 @@ class VAR:
           'residuals':resids,
           'fullresults':res,
           'aic':aic,
-          'bic':bic
+          'bic':bic,
+          'hqic':hqic
         })
-        if self.criterion in ['AIC','aic']:
-          if aic < self.best_criterion_value:
-            self.best_criterion_value = aic
+        
+        criterion= self.criterion.lower()
+        if criterion in ['aic', 'bic', 'hqic']:
+          if get_order:
+            select_order_table = pd.DataFrame(self.all_results)[['p', 'aic', 'bic', 'hqic']].sort_values(by=criterion).reset_index(drop=True)
+            print(select_order_table)
+            return select_order_table
+          criterion=locals()[self.criterion.lower()]
+          if criterion < self.best_criterion_value:
+            self.best_criterion_value = criterion
             self.best_model = self.all_results[-1]
             self.best_p = p
       except Exception as e:
         print(f'Failed for p={p}: {e}')
         continue
     if self.best_model is None:
-      raise ValueError("No valid VAR model could be fitted") 
-    C=len(self.columns)
-    for i,col in enumerate(self.columns) :
-      for lag in range(self.best_p):
-        for j, var in enumerate(columns):
-          idx=1+lag*C+j
-          self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_coef'] = self.best_model['beta'][idx, i]
-          self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_se'] = self.best_model['fullresults']['se'][idx, i]
-          self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_z'] = self.best_model['fullresults']['z_values'][idx, i]
-          self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_p'] = self.best_model['fullresults']['p_values'][idx, i]
-      self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_coef'] = self.best_model['beta'][idx, i]
-      self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_se'] = self.best_model['fullresults']['se'][idx, i]
-      self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_z'] = self.best_model['fullresults']['z_values'][idx, i]
-      self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_p'] = self.best_model['fullresults']['p_values'][idx, i]
+      raise ValueError("No valid VAR model could be fitted")
+    
+    # C=len(self.columns)
+    # for i,col in enumerate(self.columns) :
+    #   for lag in range(self.best_p):
+    #     for j, var in enumerate(columns):
+    #       idx=1+lag*C+j
+    #       self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_coef'] = self.best_model['beta'][idx, i]
+    #       self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_se'] = self.best_model['fullresults']['se'][idx, i]
+    #       self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_z'] = self.best_model['fullresults']['z_values'][idx, i]
+    #       self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_p'] = self.best_model['fullresults']['p_values'][idx, i]
+    #   self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_coef'] = self.best_model['beta'][idx, i]
+    #   self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_se'] = self.best_model['fullresults']['se'][idx, i]
+    #   self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_z'] = self.best_model['fullresults']['z_values'][idx, i]
+    #   self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_p'] = self.best_model['fullresults']['p_values'][idx, i]
     ##### needs to complete all , add summary ,and plot option to see we've done on the fitting on train data or whatever
-    ###
-    if self.best_model:
-      print(self.coeff_table)
-      self.run_full_diagnosis(plot=self.plot,threshold=self.thershold)
-      if self.plot==True:
-        print("Plots are below")
-        if not self.fitted:
-           logger.warning("Model not fully fitted; predictions may be unreliable.")
-        K = len(self.columns)
-        p = self.best_model['p']
-        fitted = self.best_model['fitted']
-        train_data = self.data.iloc[p:] 
-        if fitted.shape[0] != len(train_data):
-            raise ValueError(f"Fitted values shape {fitted.shape} does not match training data length {len(train_data)}")
-        fitted_df = pd.DataFrame(fitted, index=train_data.index, columns=self.columns)
-        n_vars = K
-        n_cols = min(2, n_vars)
-        n_rows = (n_vars + n_cols - 1) // n_cols
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 4 * n_rows), sharex=True)
-        axes = np.array(axes).flatten() if n_vars > 1 else [axes]
-        for i, col in enumerate(self.columns):
-            ax = axes[i]
-            ax.plot(train_data.index, train_data[col], 'b-', label='Original Train Data', linewidth=1.5)
-            ax.plot(fitted_df.index, fitted_df[col], 'r--', label='VAR Fitted Values', linewidth=1.5)
-            ax.set_title(f'{col}: Original vs Fitted')
-            ax.set_xlabel('Time')
-            ax.set_ylabel('Value')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-        for j in range(n_vars, len(axes)):
-            axes[j].set_visible(False)
-        plt.tight_layout()
-        plt.show()
-      return self.best_model 
+    ###Note :completed that below 
+    if self.best_model :
+      if output:
+        self.build_and_display_coeff_table()
+        self.run_full_diagnosis(plot=self.plot,threshold=self.thershold)
+        if self.plot==True:
+          print("Plots are below")
+          if not self.fitted:
+            logger.warning("Model not fully fitted; predictions may be unreliable.")
+          K = len(self.columns)
+          p = self.best_model['p']
+          fitted = self.best_model['fitted']
+          train_data = self.data.iloc[p:]
+          if fitted.shape[0] != len(train_data):
+              raise ValueError(f"Fitted values shape {fitted.shape} does not match training data length {len(train_data)}")
+          fitted_df = pd.DataFrame(fitted, index=train_data.index, columns=self.columns)
+          n_vars = K
+          n_cols = min(2, n_vars)
+          n_rows = (n_vars + n_cols - 1) // n_cols
+          fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 4 * n_rows), sharex=True)
+          axes = np.array(axes).flatten() if n_vars > 1 else [axes]
+          for i, col in enumerate(self.columns):
+              ax = axes[i]
+              ax.plot(train_data.index, train_data[col], 'b-', label='Original Train Data', linewidth=1.5)
+              ax.plot(fitted_df.index, fitted_df[col], 'r--', label='VAR Fitted Values', linewidth=1.5)
+              ax.set_title(f'{col}: Original vs Fitted')
+              ax.set_xlabel('Time')
+              ax.set_ylabel('Value')
+              ax.legend()
+              ax.grid(True, alpha=0.3)
+          for j in range(n_vars, len(axes)):
+              axes[j].set_visible(False)
+          plt.tight_layout()
+          plt.show()
+      return self.best_model
     else:
       raise ValueError("No valid VAR model")
-   ########  
+   ########
   def _companion_matrix(self):
-      beta = self.best_model['beta'] 
+      beta = self.best_model['beta']
       K = len(self.columns)
       p = self.best_model['p']
       intercept_included = beta.shape[0] == K * p + 1
-      A = beta[1:] if intercept_included else beta 
+      A = beta[1:] if intercept_included else beta
       try:
-          A = A.reshape(p, K, K).transpose(0, 2, 1) 
+          A = A.reshape(p, K, K).transpose(0, 2, 1)
       except ValueError as e:
-          raise ValueError(f"Cannot reshape beta into ({p}, {K}, {K}). Beta shape: {beta.shape}, A shape: {A.shape}") 
+          raise ValueError(f"Cannot reshape beta into ({p}, {K}, {K}). Beta shape: {beta.shape}, A shape: {A.shape}")
       cm = np.zeros((K * p, K * p))
       for i in range(p):
           cm[:K, i * K:(i + 1) * K] = A[i]
       if p > 1:
-          cm[K:, :-K] = np.eye(K * (p - 1))
+          cm[K:,:-K] = np.eye(K * (p - 1))
       eigvals = np.linalg.eigvals(cm)
       stable = np.all(np.abs(eigvals) < 1 - 1e-6)
       return cm, stable, eigvals
@@ -258,7 +399,8 @@ class VAR:
     if not 0 <= threshold <= 1:
       raise ValueError("Threshold needs to be between 0 and 1")
     Diagnosis = {}
-    K = len(self.columns)  # Number of variables (columns in residuals)
+    self.columns=self.data.columns
+    K = len(self.data.columns)  # Number of variables (columns in residuals)
     # Check if model is fitted
     if self.best_model is None:
         print("No model fitted. Cannot perform diagnostics.")
@@ -359,7 +501,7 @@ class VAR:
     No_Structural_breaks=True
     cusum_stat, cusum_pval, _ = breaks_cusumolsresid(resids, ddof=0)
     print(f"CUSUM p-value : {cusum_pval:.4f}")
-    #p > 0.05 for pass
+    #p>0.05 for pass
     if cusum_pval < 0.05:
       No_Structural_breaks=False
     if No_Structural_breaks:
@@ -370,9 +512,9 @@ class VAR:
     ################## Finish tests #############
     # Calculate final score as the average of test scores
     structural_breaks_score = 1.0 if No_Structural_breaks else 0.0
-    final_score = (Diagnosis['DW_score'] + Diagnosis['LB_score'] + 
-                   Diagnosis['Autocorrelation_score'] + 
-                   Diagnosis['Heteroscedasticity_score'] + 
+    final_score = (Diagnosis['DW_score'] + Diagnosis['LB_score'] +
+                   Diagnosis['Autocorrelation_score'] +
+                   Diagnosis['Heteroscedasticity_score'] +
                    Diagnosis['Normality_score'] + structural_breaks_score+S_score) / 7
     # Assign verdict based on threshold
     self.fitted = final_score >= threshold
@@ -407,33 +549,43 @@ class VAR:
     if plot:
       T, K = resids.shape
       fig_height = 4 * (K + 1)
-      fig, axes = plt.subplots(nrows=K + 1, ncols=2, figsize=(12, fig_height))
-      # === 1. Global CUSUM Plot (across both columns) ===
+      fig, axes = plt.subplots(nrows=K + 1, ncols=2, figsize=(12, fig_height))  
+      # === CUSUM Plot  ===
+      cusum_stat, cusum_pval, cusum_crit = breaks_cusumolsresid(resids, ddof=0)
       flat_resid = resids.flatten()
-      centered = flat_resid - np.mean(flat_resid)
-      cusum = np.cumsum(centered)
-      c = 0.948
-      threshold = c * np.sqrt(len(cusum))
-      # Merge the two top axes into one
+      n = len(flat_resid)
+      resid_centered = flat_resid - np.mean(flat_resid)
+      resid_std = np.std(flat_resid, ddof=0)
+      cusum_series = np.cumsum(resid_centered) / (resid_std * np.sqrt(n))
+      critical_value = None
+      for sig_level, crit_val in cusum_crit:
+          if sig_level == 5: 
+              critical_value = crit_val
+              break
+      
+      if critical_value is None:
+          critical_value = 1.36
       ax_cusum = plt.subplot2grid((K + 1, 2), (0, 0), colspan=2)
-      ax_cusum.plot(cusum, label='Global CUSUM of Residuals')
-      ax_cusum.axhline(y=threshold, color='red', linestyle='--', label='+95% Band')
-      ax_cusum.axhline(y=-threshold, color='red', linestyle='--', label='-95% Band')
-      ax_cusum.axhline(y=0, color='black', linestyle='-', label='Zero Line')
-      ax_cusum.set_title("Global CUSUM Test (All Residuals)")
-      ax_cusum.set_xlabel("Flattened Time Index")
-      ax_cusum.set_ylabel("CUSUM Value")
+      ax_cusum.plot(cusum_series, label='Standardized CUSUM of Residuals', color='blue')
+      ax_cusum.axhline(y=critical_value, color='red', linestyle='--', label=f'+Critical Value ({critical_value})')
+      ax_cusum.axhline(y=-critical_value, color='red', linestyle='--', label=f'-Critical Value ({-critical_value})')
+      ax_cusum.axhline(y=0, color='black', linestyle='-', alpha=0.5)
+      test_result = "PASSED" if cusum_pval >= 0.05 else "FAILED"
+      ax_cusum.set_title(f"CUSUM Test for Structural Breaks (p-value: {cusum_pval:.4f}, {test_result})")
+      ax_cusum.set_xlabel("Time Index")
+      ax_cusum.set_ylabel("Standardized CUSUM")
       ax_cusum.legend()
-      # === 2. Histogram + Q–Q Plots per residual ===
+      ax_cusum.grid(True, alpha=0.3) 
+      # === 2. Histogram + Q–Q Plots per residual===
       for i in range(K):
           ax_hist = plt.subplot2grid((K + 1, 2), (i + 1, 0))
           ax_hist.hist(resids[:, i], bins=30, density=True, alpha=0.7, color='steelblue')
-          ax_hist.set_title(f"Histogram of Residual {i}")
+          ax_hist.set_title(f"Histogram of Residual {i} ({self.columns[i]})")
           ax_hist.set_xlabel("Residual Value")
-          ax_hist.set_ylabel("Density")
+          ax_hist.set_ylabel("Density")        
           ax_qq = plt.subplot2grid((K + 1, 2), (i + 1, 1))
           probplot(resids[:, i], dist="norm", plot=ax_qq)
-          ax_qq.set_title(f"Q–Q Plot for Residual {i}")
+          ax_qq.set_title(f"Q–Q Plot for Residual {i} ({self.columns[i]})")  
       plt.tight_layout()
       plt.show()
     return Diagnosis
@@ -525,7 +677,7 @@ class VAR:
               for j in range(K):
                   idx = i * K + j
                   axes[idx].plot(range(h), irf[:, i, j], label=f'Shock {self.columns[j]} → {self.columns[i]}')
-                  axes[idx].fill_between(range(h), ci_lower[:, i, j], ci_upper[:, i, j], 
+                  axes[idx].fill_between(range(h), ci_lower[:, i, j], ci_upper[:, i, j],
                                           alpha=0.3, color='red', label=f'{100 * (1 - self.ci_alpha)}% CI')
                   axes[idx].set_title(f'{self.columns[i]} response to {self.columns[j]} shock')
                   axes[idx].set_xlabel('Horizon')
