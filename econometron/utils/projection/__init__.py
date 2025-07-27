@@ -2,7 +2,8 @@ import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
 from .basis import ChebyshevBasis
-from .num_opt import Root
+from econometron.utils.solver import nr_solve
+from econometron.utils.optimizers.optim import minimize_qn
 
 class ProjectionSolver:
     def __init__(self, order_vector, lower_bounds, upper_bounds):
@@ -18,7 +19,7 @@ class ProjectionSolver:
             Upper bounds of the domain
         """
         self.cheb_basis = ChebyshevBasis(order_vector, lower_bounds, upper_bounds)
-        self.optimizer = Root()
+        self.optimizer = minimize_qn
         self.n_dims = len(order_vector)
         self.basis_size = np.prod(np.array(order_vector) + 1)
     
@@ -55,7 +56,7 @@ class ProjectionSolver:
             f_values = self.cheb_basis.funeval(coeffs, grid)
             return residual_func(grid, f_values, coeffs)
         
-        coeffs, crit = self.optimizer.newton_raphson(
+        coeffs, crit = nr_solve(
             initial_guess, residual, maxit=maxit, stopc=stopc, verbose=verbose
         )
         return coeffs, crit
@@ -104,7 +105,7 @@ class ProjectionSolver:
                 weighted_residuals[i] = np.sum(total_weight * residuals * basis[:, i])
             return weighted_residuals
         
-        coeffs, crit = self.optimizer.newton_raphson(
+        coeffs, crit =nr_solve(
             initial_guess, residual, maxit=maxit, stopc=stopc, verbose=verbose
         )
         return coeffs, crit
@@ -147,7 +148,7 @@ class ProjectionSolver:
             residuals = residual_func(grid, f_values, coeffs)
             return 0.5 * np.sum(residuals ** 2)
         
-        coeffs, crit = self.optimizer.quasi_newton(
+        coeffs, crit = self.optimizer(
             initial_guess, objective, maxit=maxit, gtol=gtol, ptol=ptol, verbose=verbose
         )
         return coeffs, crit

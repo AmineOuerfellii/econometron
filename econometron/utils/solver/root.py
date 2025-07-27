@@ -1,6 +1,7 @@
 import numpy as np
 
 class Root:
+    
     def compute_jacobian(self, func, x, n_outputs, eps=None):
         """Compute Jacobian matrix using central difference method.
         
@@ -35,7 +36,7 @@ class Root:
             x_minus[i] = x[i]
         
         return jacobian
-
+    
     def newton_line_search(self, x0, dx0, grad, func, smult=1e-4, smin=0.1, smax=0.5, stol=1e-11):
         """Perform line search for Newton-Raphson method.
         
@@ -93,85 +94,6 @@ class Root:
             g2 = 0.5 * np.sum(func(x1) ** 2)
         
         return s2
-
-    def newton_raphson(self, x0, func, maxit=5000, stopc=1e-8, use_global=True, use_qr=False, verbose=False):
-        """Solve nonlinear system using modified Newton-Raphson method."""
-        x = x0.copy()
-        crit = np.ones(5)
-        crit[0] = 0
-        itn = 0
-        lam = 1e-6
-        lam_max = 1e6
-        lam_mult = 10.0
-        min_step = 1e-6  # Increased from 1e-8
-        
-        while itn < maxit and crit[1] >= stopc:
-            if verbose:
-                print(f"[Newton] Iteration {itn}, coeffs[:5]: {x[:5]}")
-            
-            fx = func(x)
-            df = self.compute_jacobian(func, x, len(fx))
-            
-            if np.any(np.isnan(df)):
-                crit[0] = 1
-                print("Jacobian contains NaN. Aborting.")
-                return x, crit
-            
-            jac_cond = np.linalg.cond(df)
-            obj_val = 0.5 * np.sum(fx ** 2)
-            if verbose:
-                print(f"Step {itn}: Convergence = {crit[1]:.2e}, Objective = {obj_val:.2e}, Cond = {jac_cond:.2e}")
-            
-            reg = lam * np.eye(df.shape[1])
-            try:
-                if use_qr:
-                    q, r = np.linalg.qr(df)
-                    dx = np.linalg.solve(r + lam * np.eye(r.shape[0]), q.T @ (-fx))
-                else:
-                    JTJ = df.T @ df
-                    JTF = df.T @ fx
-                    dx = np.linalg.solve(JTJ + reg, -JTF)
-            except np.linalg.LinAlgError:
-                print("LinAlgError in Newton step. Increasing regularization.")
-                lam = min(lam * lam_mult, lam_max)
-                continue
-            
-            step_norm = np.linalg.norm(dx)
-            if verbose:
-                print(f"  Newton step norm = {step_norm:.2e}, lambda = {lam:.1e}")
-            
-            step = 1.0
-            x_trial = x + step * dx
-            f_trial = func(x_trial)
-            obj_trial = 0.5 * np.sum(f_trial ** 2)
-            
-            while (not np.all(np.isfinite(f_trial)) or obj_trial > obj_val) and step > min_step:
-                step *= 0.5
-                x_trial = x + step * dx
-                f_trial = func(x_trial)
-                obj_trial = 0.5 * np.sum(f_trial ** 2)
-                if verbose:
-                    print(f"    Backtracking: step = {step:.2e}, obj = {obj_trial:.2e}")
-            
-            if step <= min_step:
-                lam = min(lam * lam_mult, lam_max)
-                if verbose:
-                    print(f"    Step too small, increasing lambda to {lam:.1e}")
-                continue
-            else:
-                lam = max(lam / lam_mult, 1e-12)
-            
-            x = x + step * dx
-            crit[1] = np.max(np.abs(func(x)))
-            crit[2] = np.max(np.abs(step * dx) / np.maximum(np.abs(x), 1.0))
-            crit[3] = 0.5 * np.sum(func(x) ** 2)
-            crit[4] = itn
-            itn += 1
-        
-        if itn >= maxit:
-            crit[0] = 3
-        
-        return x, crit
     def compute_gradient_norm(self, grad, x, fx):
         """Compute relative gradient norm.
         
@@ -183,7 +105,7 @@ class Root:
         Returns:
             Maximum relative gradient norm
         """
-        crit = np.abs(grad) * np.maximum(np.abs(x), 1.0) / np.maximum(np.abs(fx), 1.0)
+        crit=np.abs(grad)*np.maximum(np.abs(x),1.0)/np.maximum(np.abs(fx),1.0)
         return np.max(crit)
 
     def compute_param_change(self, x, dx):
@@ -253,76 +175,8 @@ class Root:
             f2 = func(x1)
         
         return s2, 0
-
-    def quasi_newton(self, x0, func, maxit=500, gtol=None, ptol=1e-7, verbose=False):
-        """Minimize scalar function using BFGS Quasi-Newton method.
-        
-        Args:
-            x0: Initial guess
-            func: Scalar objective function
-            maxit: Maximum iterations
-            gtol: Gradient tolerance
-            ptol: Parameter tolerance
-            verbose: Print iteration details
-            
-        Returns:
-            x: Solution
-            crit: Convergence criteria array
-        """
-        if gtol is None:
-            gtol = np.finfo(float).eps ** (1/3)
-        
-        crit = np.zeros(5)
-        hessian = np.eye(len(x0))
-        x = x0.copy()
-        f_val = func(x)
-        grad = self.compute_jacobian(lambda x: np.array([func(x)]), x, 1).flatten()
-        crit[1] = self.compute_gradient_norm(grad, x, f_val)
-        
-        if crit[1] < 1e-3 * gtol:
-            crit[0], crit[3], crit[4] = 0, f_val, 0
-            return x, crit
-        
-        itn = 1
-        crit[2] = 1
-        
-        while itn < maxit:
-            if verbose:
-                print(f"Iteration {itn}: gTol = {crit[1]:.2e}, pTol = {crit[2]:.2e}, f(x) = {crit[3]:.2e}")
-            
-            dx = np.linalg.solve(hessian, -grad)
-            step1 = 1.0
-            
-            while np.isnan(func(x + step1 * dx)):
-                step1 /= 2
-                if step1 < 1e-16:
-                    crit[0] = 1
-                    return x, crit
-            
-            dx = step1 * dx
-            step2, rc = self.quasi_newton_line_search(x, dx, f_val, grad, func)
-            dx = step2 * dx
-            x_new = x + dx
-            f_new = func(x_new)
-            crit[3] = f_new
-            grad_new = self.compute_jacobian(lambda x: np.array([func(x)]), x_new, 1).flatten()
-            crit[1] = self.compute_gradient_norm(grad_new, x_new, f_new)
-            crit[2] = self.compute_param_change(x_new, dx)
-            
-            if crit[1] > gtol and rc:
-                crit[0] = 2
-                return x_new, crit
-            
-            if crit[1] < gtol or crit[2] < ptol:
-                crit[0] = 0
-                return x_new, crit
-            
-            dgrad = grad_new - grad
-            hessian -= np.outer(hessian @ dx, dx @ hessian) / (dx @ hessian @ dx) + np.outer(dgrad, dgrad) / (dgrad @ dx)
-            
-            grad, x, f_val = grad_new, x_new, f_new
-            itn += 1
-            crit[4] = itn
-        
-        crit[0] = 2
-        return x, crit
+    
+    
+    
+    
+    

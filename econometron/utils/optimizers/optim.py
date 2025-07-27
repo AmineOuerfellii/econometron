@@ -277,7 +277,84 @@ def genetic_algorithm(
         }
         print(f"Error in genetic_algorithm: {e}, returning: {error_result}")
         return error_result
+    
+####################################################Quasi_newton############################################################################
+import econometron.utils.solver.root as root
 
+r=root()
+
+def minimize_qn(self, x0, func, maxit=500, gtol=None, ptol=1e-7, verbose=False):
+        """Minimize scalar function using BFGS Quasi-Newton method.
+        
+        Args:
+            x0: Initial guess
+            func: Scalar objective function
+            maxit: Maximum iterations
+            gtol: Gradient tolerance
+            ptol: Parameter tolerance
+            verbose: Print iteration details
+            
+        Returns:
+            x: Solution
+            crit: Convergence criteria array
+        """
+        if gtol is None:
+            gtol = np.finfo(float).eps ** (1/3)
+        
+        crit = np.zeros(5)
+        hessian = np.eye(len(x0))
+        x = x0.copy()
+        f_val = func(x)
+        grad = r.compute_jacobian(lambda x: np.array([func(x)]), x, 1).flatten()
+        crit[1] = r.compute_gradient_norm(grad, x, f_val)
+        
+        if crit[1] < 1e-3 * gtol:
+            crit[0], crit[3], crit[4] = 0, f_val, 0
+            return x, crit
+        
+        itn = 1
+        crit[2] = 1
+        
+        while itn < maxit:
+            if verbose:
+                print(f"Iteration {itn}: gTol = {crit[1]:.2e}, pTol = {crit[2]:.2e}, f(x) = {crit[3]:.2e}")
+            
+            dx = np.linalg.solve(hessian, -grad)
+            step1 = 1.0
+            
+            while np.isnan(func(x + step1 * dx)):
+                step1 /= 2
+                if step1 < 1e-16:
+                    crit[0] = 1
+                    return x, crit
+            
+            dx = step1 * dx
+            step2, rc = r.quasi_newton_line_search(x, dx, f_val, grad, func)
+            dx = step2 * dx
+            x_new = x + dx
+            f_new = func(x_new)
+            crit[3] = f_new
+            grad_new = r.compute_jacobian(lambda x: np.array([func(x)]), x_new, 1).flatten()
+            crit[1] = r.compute_gradient_norm(grad_new, x_new, f_new)
+            crit[2] = r.compute_param_change(x_new, dx)
+            
+            if crit[1] > gtol and rc:
+                crit[0] = 2
+                return x_new, crit
+            
+            if crit[1] < gtol or crit[2] < ptol:
+                crit[0] = 0
+                return x_new, crit
+            
+            dgrad = grad_new - grad
+            hessian -= np.outer(hessian @ dx, dx @ hessian) / (dx @ hessian @ dx) + np.outer(dgrad, dgrad) / (dgrad @ dx)
+            
+            grad, x, f_val = grad_new, x_new, f_new
+            itn += 1
+            crit[4] = itn
+        
+        crit[0] = 2
+        return x, crit
 ################################################### Bayesian Optimization #####################################################
 
 #################################################### Random Walk Metropolis ###################################################
