@@ -65,8 +65,54 @@ class linear_dsge():
     self.approximated=None
     self.solved=None
     #########################################################################################
+  def validate_entries(self):
+    # Check equations
+    if not self.equations_list or not isinstance(self.equations_list, list):
+        raise ValueError("Equations must be provided as a non-empty list.")
+    for eq in self.equations_list:
+        if not isinstance(eq, str):
+            raise ValueError(f"Each equation must be a string. Invalid entry: {eq}")
+        # Check for valid equation format
+        if '=' not in eq:
+            raise ValueError(f"Invalid equation format: {eq}. Each equation must contain an '=' sign.")
+    if self.equations_list ==[]:
+        raise ValueError("Equations must be provided as a non-empty list.")      
+    # Check variables
+    if not self.variables or not isinstance(self.variables, list):
+        raise ValueError("Variables must be provided as a non-empty list.")
+    # Check parameters
+    if not self.parameters or not isinstance(self.parameters, dict):
+        raise ValueError("Parameters must be provided as a non-empty dictionary.")
+    # Check shocks
+    if self.shocks is None:
+        warnings.warn("No shocks specified. Model may be deterministic.", stacklevel=2)
+    elif not isinstance(self.shocks, list):
+        raise ValueError("Shocks must be provided as a list.")
+    # Check exo_states and endo_states
+    if self.exo_states is None:
+        warnings.warn("Exogenous states not specified.", stacklevel=2)
+    elif not isinstance(self.exo_states, list):
+        raise ValueError("Exogenous states must be a list.")
+    if self.endo_states is None:
+        warnings.warn("Endogenous states not specified.", stacklevel=2)
+    elif not isinstance(self.endo_states, list):
+        raise ValueError("Endogenous states must be a list.")
+    # Check for duplicate variable names
+    if len(set(self.variables)) != len(self.variables):
+        raise ValueError("Duplicate variable names found in variables list.")
+    # Check for missing variables in equations
+    missing_vars = [var for var in self.variables if not any(var in eq for eq in self.equations_list)]
+    if missing_vars:
+        warnings.warn(f"Variables {missing_vars} do not appear in any equation.", stacklevel=2)
+    # Check approximation
+    if self.approximation not in ['linear', 'log_linear']:
+        warnings.warn(f"Unknown approximation type: {self.approximation}", stacklevel=2)
+    # Check normalize
+    if self.normalize and not isinstance(self.normalize, dict):
+        warnings.warn("Normalize should be a dictionary mapping variable names to values.", stacklevel=2)
+    return True
 
-  def set_initial_guess(self,initial_guess):
+  def set_initial_guess(self, initial_guess):
     """
     this function sets the initial guess for the model
     """

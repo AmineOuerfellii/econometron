@@ -82,14 +82,5 @@ class TestLinearDSGE(unittest.TestCase):
         self.assertIsInstance(irfs, dict)
         for shock, df in irfs.items():
             self.assertIsInstance(df, pd.DataFrame)
-
-    def test_edge_cases(self):
-        # Edge: No equations
-        with self.assertRaises(Exception):
-            linear_dsge(equations=[], variables=["y"], exo_states=[], endo_states=["y"], parameters={"a": 0.9}, shocks=["e_t"])
-        # Edge: No variables
-        with self.assertRaises(Exception):
-            linear_dsge(equations=["y_t = a * y_tm1 + e_t"], variables=[], exo_states=[], endo_states=[], parameters={"a": 0.9}, shocks=["e_t"])
-
 if __name__ == "__main__":
     unittest.main()

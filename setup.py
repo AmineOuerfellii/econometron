@@ -20,10 +20,11 @@ if __name__ == "__main__":
             "statsmodels>=0.14.1",
             "sympy>=1.13.0",
             "torch>=1.13.1",
+            "scikit-learn>=1.0.2",
             "colorama"
         ],
         classifiers=[
-            "Development Status :: 3 - Alpha",
+            "Development Status :: 3 - Beta",
             "Intended Audience :: Science/Research",
             "License :: OSI Approved :: MIT License",
             "Programming Language :: Python :: 3",

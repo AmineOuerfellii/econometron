@@ -13,6 +13,16 @@ import time
 import warnings
 
 class generic_basis(nn.Module):
+    """
+    Generic basis function for N-BEATS.
+    
+    This basis implements a simple linear transformation of the input parameters theta_b and theta_f.
+    Used for the 'generic' block type in N-BEATS.
+    
+    Args:
+        backcast_length (int): Length of the backcast window.
+        forecast_length (int): Length of the forecast horizon.
+    """
     def __init__(self,backcast_length,forecast_length):
       super(generic_basis, self).__init__()
       self.backcast_length = backcast_length
@@ -35,6 +45,17 @@ class generic_basis(nn.Module):
       forecast=theta_f*self.basis_f+self.b_f
       return forecast,backcast
 class polynomial_basis(nn.Module):
+    """
+    Polynomial basis function for N-BEATS.
+    
+    Constructs polynomial basis matrices for backcast and forecast using powers of normalized time indices.
+    Used for interpretable N-BEATS blocks.
+    
+    Args:
+        degree (int): Degree of the polynomial basis.
+        backcast_length (int): Length of the backcast window.
+        forecast_length (int): Length of the forecast horizon.
+    """
     def __init__(self, degree, backcast_length, forecast_length):
         super(polynomial_basis, self).__init__()
         self.degree = degree
@@ -63,15 +84,18 @@ class polynomial_basis(nn.Module):
         backcast = torch.matmul(theta_b, self.backcast_basis)
         return forecast, backcast
 class chebyshev_basis(nn.Module):
-      """
-      this is experimental thing , I "the author of this package",
-      since for interprebality we use a polyniomial basis , i thought we could use the cheb basis , since it more
-      performant.
-      """
-      def __init__(self,
-                   backcast_length,
-                   forecast_length,
-                   degree):
+    """
+    Chebyshev polynomial basis for N-BEATS (experimental).
+    
+    Uses Chebyshev polynomials of the first kind as basis functions for backcast and forecast.
+    Intended for improved interpretability and performance in some cases.
+    
+    Args:
+        backcast_length (int): Length of the backcast window.
+        forecast_length (int): Length of the forecast horizon.
+        degree (int): Degree of the Chebyshev polynomial basis.
+    """
+    def __init__(self, backcast_length, forecast_length, degree):
         super(chebyshev_basis, self).__init__()
         self.backcast_length = backcast_length
         self.forecast_length = forecast_length
@@ -94,11 +118,21 @@ class chebyshev_basis(nn.Module):
                 basis_fore[n,i] = 2 * t_fore[i] * basis_fore[n-1,i] - basis_fore[n-2,i]
         self.register_buffer('forecast_basis', torch.tensor(basis_fore, dtype=torch.float32))
         self.register_buffer('backcast_basis', torch.tensor(basis_back, dtype=torch.float32))
-      def forward(self, theta_b,theta_f):
+    def forward(self, theta_b,theta_f):
           forecast = torch.matmul(theta_f,self.forecast_basis)
           backcast = torch.matmul(theta_b,self.backcast_basis)
           return forecast,backcast
 class fourier_basis(nn.Module):
+    """
+    Fourier basis function for N-BEATS.
+    
+    Constructs sine and cosine basis matrices for backcast and forecast, as described in the N-BEATS paper.
+    Used for blocks modeling seasonality.
+    
+    Args:
+        backcast_length (int): Length of the backcast window.
+        forecast_length (int): Length of the forecast horizon.
+    """
     def __init__(self, backcast_length, forecast_length):
         super(fourier_basis, self).__init__()
         self.backcast_length = backcast_length
@@ -129,6 +163,21 @@ class fourier_basis(nn.Module):
         backcast = torch.matmul(theta_b, self.backcast_basis)
         return forecast, backcast
 class N_beats_Block(nn.Module):
+    """
+    N-BEATS Block: Core building block for the N-BEATS model.
+    
+    Each block consists of a fully connected stack, basis function, and theta parameter generators.
+    Supports multiple basis types (generic, fourier, chebyshev, polynomial).
+    
+    Args:
+        input_size (int): Input feature size (usually backcast length).
+        Horizon (int): Forecast horizon length.
+        backcast (int): Backcast window length.
+        degree (int): Degree for polynomial/chebyshev basis (if used).
+        n_layers (int): Number of fully connected layers in the block.
+        Hidden_size (int): Hidden layer size.
+        basis_type (str): Basis type ('generic', 'fourier', 'chebyshev', 'polynomial').
+    """
     def __init__(self,
                  input_size: int,
                  Horizon: int,
@@ -204,6 +253,22 @@ class N_beats_Block(nn.Module):
         forecast, backcast = self.basis_function(theta_b, theta_f)
         return forecast, backcast
 class N_beats_stack(nn.Module):
+    """
+    N-BEATS Stack: Sequence of N-BEATS blocks.
+    
+    Each stack contains multiple blocks (optionally sharing weights) and produces a forecast and residual.
+    
+    Args:
+        input_size (int): Input feature size (usually backcast length).
+        n_blocks (int): Number of blocks in the stack.
+        horizon (int): Forecast horizon length.
+        backcast_size (int): Backcast window length.
+        n_layers_per_block (int): Number of layers per block.
+        hidden_size (int): Hidden layer size.
+        degree (int): Degree for polynomial/chebyshev basis (if used).
+        basis_type (str): Basis type for all blocks in the stack.
+        share_weights (bool): Whether to share weights across blocks.
+    """
     def __init__(self, input_size, n_blocks, horizon, backcast_size,n_layers_per_block, hidden_size,
                  degree, basis_type="generic", share_weights=True):
         super(N_beats_stack, self).__init__()
@@ -246,6 +311,16 @@ class N_beats_stack(nn.Module):
             residual = residual - backcast    
         return stack_forecast, residual
 class N_beats(nn.Module):
+    """
+    N-BEATS Model: Main model class for N-BEATS time series forecasting.
+    
+    Composed of multiple stacks, each with its own configuration. Handles forward pass and model info.
+    
+    Args:
+        stack_configs (List[Dict]): List of stack configuration dictionaries.
+        backcast_length (int): Length of the input (backcast) window.
+        forecast_length (int): Length of the forecast horizon.
+    """
     def __init__(self, stack_configs, backcast_length, forecast_length):
         super(N_beats, self).__init__()
         self.backcast_length = backcast_length
@@ -299,7 +374,11 @@ class N_beats(nn.Module):
             info['stack_configs'].append(stack_info)
         return info
 class LossCalculator:
-    """Utility class for various loss functions"""
+    """
+    Utility class for various loss functions used in N-BEATS training.
+    
+    Provides static methods for MSE, MAE, MAPE, SMAPE, and Huber loss.
+    """
     
     @staticmethod
     def mse_loss(y_true, y_pred):
@@ -327,7 +406,17 @@ class LossCalculator:
         linear_loss = delta * residual - 0.5 * delta ** 2
         return torch.mean(torch.where(condition, squared_loss, linear_loss))
 class EarlyStopping:
-    """Early stopping utility class"""
+    """
+    Early stopping utility class for N-BEATS training.
+    
+    Monitors validation loss and stops training if no improvement is seen for a given patience.
+    Optionally restores the best model weights.
+    
+    Args:
+        patience (int): Number of epochs to wait for improvement.
+        min_delta (float): Minimum change to qualify as improvement.
+        restore_best_weights (bool): Whether to restore best weights after stopping.
+    """
     def __init__(self, patience=7, min_delta=0, restore_best_weights=True):
         self.patience = patience
         self.min_delta = min_delta
@@ -357,7 +446,16 @@ class EarlyStopping:
         self.best_weights = model.state_dict().copy()
 class NeuralForecast:
     """
-    Complete forecasting framework for N-BEATS model
+    Complete forecasting framework for N-BEATS model.
+    
+    Provides data processing, training, evaluation, hyperparameter search, and plotting utilities for N-BEATS.
+    Handles normalization, device management, and model saving/loading.
+    
+    Args:
+        stack_configs (List[Dict]): List of stack configuration dictionaries.
+        backcast_length (int): Length of the input (backcast) window.
+        forecast_length (int): Length of the forecast horizon.
+        device (str, optional): Device to use ('cpu', 'cuda', or None for auto-detection).
     """
     
     def __init__(self, stack_configs: List[Dict], backcast_length: int, forecast_length: int, device: str = None):
