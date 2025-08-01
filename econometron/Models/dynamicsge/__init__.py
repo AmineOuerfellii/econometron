@@ -1,14 +1,13 @@
 # # ###########################
 # Beginning with imports
-from sympy import symbols, Symbol, Matrix , collect , S, exp ,log
+from sympy import Symbol, Matrix , collect , S,log
 import re
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
 from scipy.optimize import fsolve
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.linalg import ordqz,qz,schur
-import matplotlib.animation as animation
+from scipy.linalg import ordqz
 import warnings
 
 ####################
@@ -313,188 +312,226 @@ class linear_dsge():
         raise ValueError(f"Reordered variables do not match original set: "f"reordered={reordered}, original={self.variables}")
     return reordered
 
-  def _Analytical_jacobians(self,debug=False):
+  def _Analytical_jacobians(self, debug=False):
     """
     Compute Jacobians A, B, and C for the DSGE model A E_t[y_{t+1}] = B y_t + C epsilon_t.
-    Variables are ordered as [states, control], shocks follow self.shock_names order.
-    Rows of A, B, C are reordered to match variable indices in ordered_vars.
+    Variables are ordered as [exo_states, endo_states, controls].
+    
     Returns:
         A (ndarray): Jacobian with respect to y_{t+1}.
         B (ndarray): Jacobian with respect to y_t.
         C (ndarray): Jacobian with respect to shocks epsilon_t.
     """
+    # Use the same variable ordering as numerical method
     ordered_vars = self._reorder_variables()
-    if debug==True:
-      print("Reordered variables:", ordered_vars)
+    if debug:
+        print("Ordered variables:", ordered_vars)
+    
+    # Check for steady states
+    if self.steady_state is None:
+        raise ValueError("Steady state not computed. Call compute_ss() first")
+
+    # Initialize matrices
+    n_eqs = len(self.equations_list)
+    n_vars = len(ordered_vars)
+    n_shocks = len(self.shocks) if self.shocks else 0
+    
+    A = np.zeros((n_eqs, n_vars))
+    B = np.zeros((n_eqs, n_vars))
+    C = np.zeros((n_eqs, n_shocks))
+
+    # Create symbols for variables
     vars_t = [Symbol(f"{var}_t") for var in ordered_vars]
     vars_tp1 = [Symbol(f"{var}_tp1") for var in ordered_vars]
-    vars_tm1 = [Symbol(f"{var}_tm1") for var in ordered_vars]
+    shock_symbols = [Symbol(shock) for shock in self.shocks] if self.shocks else []
 
-    ##Check for steady states
-
-    if self.steady_state is None:
-      raise ValueError("Steady state not computed. Call compute_ss() first")
-
-    #Intialization of Matrices
-    A = np.zeros((len(self.equations_list), len(ordered_vars)))
-    B = np.zeros((len(self.equations_list), len(ordered_vars)))
-    shocks = self.shocks if self.shocks else []
-    C = np.zeros((len(self.equations_list), len(shocks)))
-    if not shocks:
-      print("Warning: No shocks identified. Check self.shock_names:", self.shocks)
     # Steady state substitution dictionary
-    subs = {Symbol(f"{var}_t"): self.steady_state[var] for var in ordered_vars}
-    subs.update({Symbol(f"{var}_tp1"): self.steady_state[var] for var in ordered_vars})
-    subs.update({Symbol(f"{shock}"): 0.0 for shock in shocks})
+    subs = {}
+    for var in ordered_vars:
+        subs[Symbol(f"{var}_t")] = self.steady_state[var]
+        subs[Symbol(f"{var}_tp1")] = self.steady_state[var]
+        subs[Symbol(f"{var}_tm1")] = self.steady_state[var]
+    
+    for shock in self.shocks if self.shocks else []:
+        subs[Symbol(shock)] = 0.0
+        subs[Symbol(f"{shock}_t")] = 0.0
+    
     subs.update({Symbol(k): float(v) for k, v in self.parameters.items()})
 
+    if debug:
+        print("Substitution dictionary:", subs)
 
-    ######
-    # Mapping of equations to variables
+    # Process each equation
+    for eq_idx, eq in enumerate(self.equations_list):
+        if debug:
+            print(f"\nProcessing equation {eq_idx}: {eq}")
+        
+        # Parse the equation into components
+        tp1_terms, t_terms, shock_terms = self._parse_equations(eq)
+        
+        if debug:
+            print(f"  tp1_terms: {tp1_terms}")
+            print(f"  t_terms: {t_terms}")
+            print(f"  shock_terms: {shock_terms}")
+
+        if self.approximation == 'log_linear':
+            # For log-linear approximation
+            if np.any(np.isclose([self.steady_state[var] for var in ordered_vars], 0)):
+                raise ValueError("Steady state contains zeros; cannot compute log-linear Jacobians.")
+
+            # Create log variables
+            log_vars_t = [Symbol(f"log_{var}_t") for var in ordered_vars]
+            log_vars_tp1 = [Symbol(f"log_{var}_tp1") for var in ordered_vars]
+            log_shocks = [Symbol(f"log_{shock}") for shock in self.shocks] if self.shocks else []
+
+            # Build the linearized equation around steady state
+            expr = tp1_terms - t_terms - shock_terms
+            
+            # Handle log expressions or linearize around steady state
+            if "log(" in str(expr):
+                # Direct log substitution
+                subs_log = {}
+                for var, log_var, log_var_tp1 in zip(ordered_vars, log_vars_t, log_vars_tp1):
+                    subs_log[log(Symbol(f"{var}_t"))] = log_var
+                    subs_log[log(Symbol(f"{var}_tp1"))] = log_var_tp1
+                for shock, log_shock in zip(self.shocks if self.shocks else [], log_shocks):
+                    subs_log[Symbol(shock)] = log_shock
+                    subs_log[Symbol(f"{shock}_t")] = log_shock
+                expr = expr.subs(subs_log)
+            else:
+                # Linearize around steady state
+                linear_expr = expr.subs(subs)
+                
+                # Add first-order terms for current period variables
+                for j, var in enumerate(ordered_vars):
+                    deriv = expr.diff(Symbol(f"{var}_t")).subs(subs)
+                    linear_expr += deriv * self.steady_state[var] * log_vars_t[j]
+                
+                # Add first-order terms for forward period variables
+                for j, var in enumerate(ordered_vars):
+                    deriv = expr.diff(Symbol(f"{var}_tp1")).subs(subs)
+                    linear_expr += deriv * self.steady_state[var] * log_vars_tp1[j]
+                
+                # Add shock terms
+                for j, shock in enumerate(self.shocks if self.shocks else []):
+                    deriv = expr.diff(Symbol(shock)).subs(subs)
+                    linear_expr += deriv * log_shocks[j]
+                
+                expr = linear_expr
+
+            # Compute Jacobians for log-linear case
+            for j, log_var_tp1 in enumerate(log_vars_tp1):
+                coeff = expr.diff(log_var_tp1)
+                try:
+                    A[eq_idx, j] = float(coeff.subs({sym: 0 for sym in log_vars_t + log_vars_tp1 + log_shocks}))
+                except (TypeError, ValueError):
+                    A[eq_idx, j] = 0.0
+
+            for j, log_var_t in enumerate(log_vars_t):
+                coeff = expr.diff(log_var_t)
+                try:
+                    B[eq_idx, j] = float(coeff.subs({sym: 0 for sym in log_vars_t + log_vars_tp1 + log_shocks}))
+                except (TypeError, ValueError):
+                    B[eq_idx, j] = 0.0
+
+            for j, log_shock in enumerate(log_shocks):
+                coeff = expr.diff(log_shock)
+                try:
+                    C[eq_idx, j] = float(coeff.subs({sym: 0 for sym in log_vars_t + log_vars_tp1 + log_shocks}))
+                except (TypeError, ValueError):
+                    C[eq_idx, j] = 0.0
+
+        else:
+            # Linear approximation
+            # Compute A matrix (derivatives w.r.t. y_{t+1})
+            for j, var_tp1 in enumerate(vars_tp1):
+                coeff = tp1_terms.diff(var_tp1) if tp1_terms != S.Zero else S.Zero
+                try:
+                    A[eq_idx, j] = float(coeff.subs(subs)) if coeff != S.Zero else 0.0
+                except (TypeError, ValueError):
+                    A[eq_idx, j] = 0.0
+
+            # Compute B matrix (derivatives w.r.t. y_t)
+            for j, var_t in enumerate(vars_t):
+                coeff = t_terms.diff(var_t) if t_terms != S.Zero else S.Zero
+                try:
+                    B[eq_idx, j] = float(coeff.subs(subs)) if coeff != S.Zero else 0.0
+                except (TypeError, ValueError):
+                    B[eq_idx, j] = 0.0
+
+            # Compute C matrix (derivatives w.r.t. shocks)
+            for j, shock_sym in enumerate(shock_symbols):
+                coeff = shock_terms.diff(shock_sym) if shock_terms != S.Zero else S.Zero
+                try:
+                    C[eq_idx, j] = float(coeff.subs(subs)) if coeff != S.Zero else 0.0
+                except (TypeError, ValueError):
+                    C[eq_idx, j] = 0.0
+
+    # Create equation-to-variable mapping to match numerical method
     eq_to_var = {}
     remaining_eqs = list(range(len(self.equations_list)))
-    for i, eq in enumerate(self.equations_list):
-        tp1_terms, _, _ = self._parse_equations(eq)
-        # Look for tp1 variables to identify state transitions
-        for var in ordered_vars:
+    
+    # First pass: match equations with forward-looking variables
+    for var in ordered_vars:
+        for i, eq in enumerate(self.equations_list):
+            if i not in remaining_eqs:
+                continue
+            tp1_terms, _, _ = self._parse_equations(eq)
             if Symbol(f"{var}_tp1") in tp1_terms.free_symbols:
-                if var not in eq_to_var.values() and i in remaining_eqs:
+                if var not in eq_to_var.values():
                     eq_to_var[i] = var
                     remaining_eqs.remove(i)
                     break
-        # For non-state equations, look for t variables
-        if i not in eq_to_var:
-            _, t_terms, _ = self._parse_equations(eq)
-            for var in ordered_vars:
+    
+    # Second pass: match remaining equations with current period variables
+    for var in ordered_vars:
+        if var not in eq_to_var.values():
+            for i, eq in enumerate(self.equations_list):
+                if i not in remaining_eqs:
+                    continue
+                _, t_terms, _ = self._parse_equations(eq)
                 if Symbol(f"{var}_t") in t_terms.free_symbols:
-                    if var not in eq_to_var.values() and i in remaining_eqs:
-                        eq_to_var[i] = var
-                        remaining_eqs.remove(i)
-                        break
-    # Assign remaining equations to unassigned variables
+                    eq_to_var[i] = var
+                    remaining_eqs.remove(i)
+                    break
+    
+    # Handle any remaining equations
     remaining_vars = [v for v in ordered_vars if v not in eq_to_var.values()]
     for i, eq_idx in enumerate(remaining_eqs):
         if i < len(remaining_vars):
             eq_to_var[eq_idx] = remaining_vars[i]
+
     if debug:
-        print(self.approximation)
-    # Create reordering index
+        print("Equation to variable mapping:", eq_to_var)
+
+    # Create reordering index to match numerical method
     reorder_idx = [0] * len(self.equations_list)
     for eq_idx, var in eq_to_var.items():
         var_idx = ordered_vars.index(var)
         reorder_idx[eq_idx] = var_idx
-    if debug==True:
-      print("Equation to variable mapping:", eq_to_var)
-      print("Reordering index:", reorder_idx)
-    ## lineariztion in levels : approximtion =linear
-    if self.approximation == 'linear':
-      for i, eq in enumerate(self.equations_list):
-        tp1_terms, t_terms, shock_terms = self._parse_equations(eq)
-        if debug==True:
-          print(f"Equation {i+1}: {eq}, shock_terms: {shock_terms}")
-        for j, var in enumerate(vars_tp1):
-          coeff = tp1_terms.diff(var) if tp1_terms != S.Zero else S.Zero
-          A[i, j] = float(coeff.subs(subs)) if coeff != S.Zero else 0.0
-        for j, var in enumerate(vars_t):
-          coeff = t_terms.diff(var) if t_terms != S.Zero else S.Zero
-          B[i, j] = float(coeff.subs(subs)) if coeff != S.Zero else 0.0
-        for j, shock in enumerate(shocks):
-          coeff = shock_terms.diff(Symbol(shock)) if shock_terms != S.Zero else S.Zero
-          if debug:
-            print(coeff)
-            print(f"Equation {i+1}, shock {shocks[j]}, derivative: {coeff}")
-          C[i, j] = float(coeff.subs(subs)) if coeff != S.Zero else 0.0
-    else :
-      if np.any(np.isclose([self.steady_state[var] for var in ordered_vars], 0)):
-          raise ValueError("Steady state contains zeros; cannot compute log-linear Jacobians.")
 
-      log_vars_t = [Symbol(f"log_{var}_t") for var in ordered_vars]
-      log_vars_tp1 = [Symbol(f"log_{var}_tp1") for var in ordered_vars]
-      log_shocks = [Symbol(f"log_{shock}") for shock in shocks]
+    if debug:
+        print("Reordering index:", reorder_idx)
 
-      eqs = []
-      for eq in self.equations_list:
-          tp1_terms, t_terms, shock_terms = self._parse_equations(eq)
-          expr = tp1_terms - t_terms - shock_terms
-          if debug:
-            print(f"Equation: {eq}, shock_terms: {shock_terms}")
-          
-          # Handle the AR(1) process equation differently (equation with log terms)
-          if "log(" in str(expr):
-              # This is already a log-deviation equation
-              # Replace log(A_t) with log_A_t, log(A_tp1) with log_A_tp1, etc.
-              subs_log = {}
-              for var, log_var, log_var_tp1 in zip(ordered_vars, log_vars_t, log_vars_tp1):
-                  subs_log[log(Symbol(f"{var}_t"))] = log_var
-                  subs_log[log(Symbol(f"{var}_tp1"))] = log_var_tp1
-              
-              # Shocks are already deviations in log equations
-              for shock, log_shock in zip(shocks, log_shocks):
-                  subs_log[Symbol(shock)] = log_shock
-                  
-              expr = expr.subs(subs_log)
-          else:
-              # This is a level equation - needs log-linearization
-              subs_ss = {}
-              for var in ordered_vars:
-                  subs_ss[Symbol(f"{var}_t")] = self.steady_state[var]
-                  subs_ss[Symbol(f"{var}_tp1")] = self.steady_state[var]
-              for shock in shocks:
-                  subs_ss[Symbol(shock)] = 0
-                  
-              # Take derivatives for linearization
-              linear_expr = expr.subs(subs_ss)  # Constant term (should be 0 at steady state)
-              
-              # Add linear terms
-              for var, log_var in zip(ordered_vars, log_vars_t):
-                  deriv = expr.diff(Symbol(f"{var}_t")).subs(subs_ss)
-                  linear_expr += deriv * self.steady_state[var] * log_var
-                  
-              for var, log_var_tp1 in zip(ordered_vars, log_vars_tp1):
-                  deriv = expr.diff(Symbol(f"{var}_tp1")).subs(subs_ss)
-                  linear_expr += deriv * self.steady_state[var] * log_var_tp1
-                  
-              for shock, log_shock in zip(shocks, log_shocks):
-                  deriv = expr.diff(Symbol(shock)).subs(subs_ss)
-                  linear_expr += deriv * log_shock
-                  
-              expr = linear_expr
-          
-          # Normalize if specified
-          normalize_var = getattr(self, 'normalize', None)
-          if normalize_var and normalize_var in ordered_vars and not np.isclose(self.steady_state[normalize_var], 0):
-              expr = expr / self.steady_state[normalize_var]
-          
-          eqs.append(expr)
+    # Reorder rows to match numerical Jacobians
+    A_reordered = np.zeros_like(A)
+    B_reordered = np.zeros_like(B)
+    C_reordered = np.zeros_like(C)
+    
+    for i, idx in enumerate(reorder_idx):
+        A_reordered[idx, :] = A[i, :]
+        B_reordered[idx, :] = B[i, :]
+        C_reordered[idx, :] = C[i, :]
 
-      # Compute Jacobians
-      A_mat = Matrix(eqs).jacobian(log_vars_tp1)
-      B_mat = Matrix(eqs).jacobian(log_vars_t)
-      C_mat = Matrix(eqs).jacobian(log_shocks)
-
-      # Set log deviations to zero for steady state evaluation
-      log_subs = {Symbol(f"log_{var}_t"): 0 for var in ordered_vars}
-      log_subs.update({Symbol(f"log_{var}_tp1"): 0 for var in ordered_vars})
-      log_subs.update({Symbol(f"log_{shock}"): 0 for shock in shocks})
-      log_subs.update({Symbol(k): float(v) for k, v in self.parameters.items()})
-      if debug:
-        print(log_subs)
-
-      A = np.array(A_mat.subs(log_subs), dtype=float)
-      B = np.array(B_mat.subs(log_subs), dtype=float)
-      C = np.array(C_mat.subs(log_subs), dtype=float)
-      # Reorder rows
-      A = A[reorder_idx, :]
-      B = B[reorder_idx, :]
-      C = C[reorder_idx, :]
-      if debug==True:
-        print("Analytical Jacobian A (rows: variables, cols: [states, control]):\n", A_mat)
-        print("Analytical Jacobian B (rows: variables, cols: [states, control]):\n", B_mat)
-        print("Analytical Jacobian C (rows: variables, cols: shocks ", shocks, "):\n", C_mat)
-        if np.allclose(C, 0) and shocks:
-            print("Warning: C matrix is all zeros. Check shock specifications or _parse_equation method.")
-
-    return A, B, C
+    if debug:
+        print("Analytical Jacobian A (reordered):\n", A_reordered)
+        print("Analytical Jacobian B (reordered):\n", B_reordered)
+        print("Analytical Jacobian C (reordered):\n", C_reordered)
+        if np.allclose(C_reordered, 0) and self.shocks:
+            print("Warning: C matrix is all zeros. Check shock specifications.")
+    # Return the reordered Jacobians
+    A, B, C = A_reordered, B_reordered, C_reordered
+    return A,B,C
   def _approx_fprime(self, x, f, epsilon=None):
       n = len(x)
       fx = f(x)
@@ -508,175 +545,207 @@ class linear_dsge():
       return J
 
   def _Numerical_jacobians(self, debug=False):
-      """
-      Compute numerical Jacobians A, B, and C for the DSGE model A E_t[y_{t+1}] = B y_t + C epsilon_t
-      using finite differences. Handles shocks flexibly, avoiding parameter-shock collisions.
-      Returns:
-          A_num (ndarray): Numerical Jacobian with respect to y_{t+1}.
-          B_num (ndarray): Numerical Jacobian with respect to y_t.
-          C_num (ndarray): Numerical Jacobian with respect to shocks epsilon_t.
-      """
-      e_s = np.array([self.steady_state[var] for var in self.variables], dtype=np.float64)
-      A_num = np.zeros((len(self.equations_list), len(self.variables)))
-      B_num = np.zeros((len(self.equations_list), len(self.variables)))
-      
-      # Use shock names consistently
-      shock_names = self.shocks
-      C_num = np.zeros((len(self.equations_list), len(shock_names)))
-      
-      if not shock_names:
-          print("Warning: No shocks identified. Check self.shocks:", self.shocks)
-          return A_num, B_num, C_num
-      
-      # Map shock names to symbols
-      shock_symbols = {shock: Symbol(shock) for shock in shock_names}
-      
-      # Exclude shock names from parameters to avoid collision
-      parameters = {k: v for k, v in self.parameters.items() if k not in shock_names}
-      
-      if self.approximation == 'log_linear':
-          if np.any(np.isclose(e_s, 0)):
-              raise ValueError("Steady state contains zeros; cannot compute log-linear Jacobians.")
-          
-          def psi(log_vars_fwd, log_vars_cur, log_shocks=None):
-              vars_fwd = np.exp(log_vars_fwd) 
-              vars_cur = np.exp(log_vars_cur) 
-              shocks = log_shocks if log_shocks is not None else np.zeros(len(shock_names))
-              residuals = np.zeros(len(self.equations_list))
-              
-              for i, eq in enumerate(self.equations_list):
-                  tp1_terms, t_terms, shock_terms = self._parse_equations(eq)
-                  expr = tp1_terms + t_terms + shock_terms
-                  
-                  if debug:
-                      print(f"Equation {i+1}: {eq}, shock_terms: {shock_terms}")
-                  
-                  # Check if equation contains log terms
-                  if "log(" in str(expr):
-                      # This is already a log equation - substitute log variables directly
-                      subs = {}
-                      
-                      # For log terms, substitute with log deviations
-                      for j, var in enumerate(self.variables):
-                          subs[log(Symbol(f"{var}_t"))] = log_vars_cur[j]
-                          subs[log(Symbol(f"{var}_tp1"))] = log_vars_fwd[j]
-                      
-                      # Handle shocks
-                      for j, shock in enumerate(shock_names):
-                          subs[Symbol(shock)] = shocks[j]
-                      
-                      subs.update(parameters)
-                      
-                  else:
-                      # Level equation - substitute actual variable values
-                      subs = {Symbol(f"{var}_t"): vars_cur[j] for j, var in enumerate(self.variables)}
-                      subs.update({Symbol(f"{var}_tp1"): vars_fwd[j] for j, var in enumerate(self.variables)})
-                      
-                      # Handle shocks
-                      for j, shock in enumerate(shock_names):
-                          subs[Symbol(shock)] = shocks[j]
-                      
-                      subs.update(parameters)
-                  
-                  if debug:
-                      print(f"Equation {i+1} expr before subs: {expr}")
-                  
-                  expr = expr.subs(subs)
-                  
-                  try:
-                      residuals[i] = float(expr)
-                  except (ValueError, TypeError) as e:
-                      if debug:
-                          print(f"Error evaluating equation {i+1}: {eq}, expr: {expr}, error: {e}")
-                      residuals[i] = np.nan
-              
-              if debug:
-                  print(f"Log-linear residuals (fwd={log_vars_fwd}, cur={log_vars_cur}, shocks={shocks}): {residuals}")
-              return residuals
+        """
+        Compute numerical Jacobians A, B, and C for the DSGE model A E_t[y_{t+1}] = B y_t + C epsilon_t
+        using finite differences. Variables are ordered as [exo_states, endo_states, costates].
+        Equations are reordered to match variable order using equation-to-variable mapping.
+        Returns:
+            A_num (ndarray): Numerical Jacobian with respect to y_{t+1}.
+            B_num (ndarray): Numerical Jacobian with respect to y_t.
+            C_num (ndarray): Numerical Jacobian with respect to shocks epsilon_t.
+        """
+        ordered_vars = self._reorder_variables()
+        if debug:
+            print("Reordered variables:", ordered_vars)
+        
+        # Equation-to-variable mapping
+        eq_to_var = {}
+        remaining_eqs = list(range(len(self.equations_list)))
+        for i, eq in enumerate(self.equations_list):
+            tp1_terms, _, _ = self._parse_equations(eq)
+            for var in ordered_vars:
+                if Symbol(f"{var}_tp1") in tp1_terms.free_symbols:
+                    if var not in eq_to_var.values() and i in remaining_eqs:
+                        eq_to_var[i] = var
+                        remaining_eqs.remove(i)
+                        break
+            if i not in eq_to_var:
+                _, t_terms, _ = self._parse_equations(eq)
+                for var in ordered_vars:
+                    if Symbol(f"{var}_t") in t_terms.free_symbols:
+                        if var not in eq_to_var.values() and i in remaining_eqs:
+                            eq_to_var[i] = var
+                            remaining_eqs.remove(i)
+                            break
+        remaining_vars = [v for v in ordered_vars if v not in eq_to_var.values()]
+        for i, eq_idx in enumerate(remaining_eqs):
+            if i < len(remaining_vars):
+                eq_to_var[eq_idx] = remaining_vars[i]
+        
+        if debug:
+            print("Equation to variable mapping:", eq_to_var)
+        
+        # Create reordering index for equations
+        reorder_idx = [0] * len(self.equations_list)
+        for eq_idx, var in eq_to_var.items():
+            var_idx = ordered_vars.index(var)
+            reorder_idx[eq_idx] = var_idx
+        if debug:
+            print("Reordering index:", reorder_idx)
+        
+        # Steady state values in the reordered variable order
+        e_s = np.array([self.steady_state[var] for var in ordered_vars], dtype=np.float64)
+        A_num = np.zeros((len(self.equations_list), len(ordered_vars)))
+        B_num = np.zeros((len(self.equations_list), len(ordered_vars)))
+        
+        # Use shock names consistently
+        shock_names = self.shocks if self.shocks else []
+        C_num = np.zeros((len(self.equations_list), len(shock_names)))
+        
+        if not shock_names:
+            print("Warning: No shocks identified. Check self.shocks:", self.shocks)
+        
+        # Map shock names to symbols
+        shock_symbols = {shock: Symbol(shock) for shock in shock_names}
+        
+        # Exclude shock names from parameters to avoid collision
+        parameters = {k: v for k, v in self.parameters.items() if k not in shock_names}
+        
+        if self.approximation == 'log_linear':
+            if np.any(np.isclose(e_s, 0)):
+                raise ValueError("Steady state contains zeros; cannot compute log-linear Jacobians.")
+            
+            def psi(log_vars_fwd, log_vars_cur, log_shocks=None):
+                vars_fwd = np.exp(log_vars_fwd)
+                vars_cur = np.exp(log_vars_cur)
+                shocks = log_shocks if log_shocks is not None else np.zeros(len(shock_names))
+                residuals = np.zeros(len(self.equations_list))
+                
+                for i, eq in enumerate(self.equations_list):
+                    tp1_terms, t_terms, shock_terms = self._parse_equations(eq)
+                    expr = tp1_terms + t_terms + shock_terms
+                    
+                    if debug:
+                        print(f"Equation {i+1}: {eq}, shock_terms: {shock_terms}")
+                    
+                    if "log(" in str(expr):
+                        subs = {}
+                        for j, var in enumerate(ordered_vars):
+                            subs[log(Symbol(f"{var}_t"))] = log_vars_cur[j]
+                            subs[log(Symbol(f"{var}_tp1"))] = log_vars_fwd[j]
+                        for j, shock in enumerate(shock_names):
+                            subs[Symbol(shock)] = shocks[j]
+                        subs.update(parameters)
+                    else:
+                        subs = {Symbol(f"{var}_t"): vars_cur[j] for j, var in enumerate(ordered_vars)}
+                        subs.update({Symbol(f"{var}_tp1"): vars_fwd[j] for j, var in enumerate(ordered_vars)})
+                        for j, shock in enumerate(shock_names):
+                            subs[Symbol(shock)] = shocks[j]
+                        subs.update(parameters)
+                    
+                    if debug:
+                        print(f"Equation {i+1} expr before subs: {expr}")
+                    
+                    expr = expr.subs(subs)
+                    
+                    try:
+                        residuals[i] = float(expr)
+                    except (ValueError, TypeError) as e:
+                        if debug:
+                            print(f"Error evaluating equation {i+1}: {eq}, expr: {expr}, error: {e}")
+                        residuals[i] = np.nan
+                
+                # Reorder residuals according to reorder_idx
+                reordered_residuals = np.zeros_like(residuals)
+                for i, idx in enumerate(reorder_idx):
+                    reordered_residuals[idx] = residuals[i]
+                
+                if debug:
+                    print(f"Log-linear residuals (fwd={log_vars_fwd}, cur={log_vars_cur}, shocks={shocks}): {reordered_residuals}")
+                return reordered_residuals
 
-          log_ss = np.log(e_s)
-          print("log_ss",log_ss)
-          log_shocks_ss = np.zeros(len(shock_names))
-          
-          psi_fwd = lambda log_fwd: psi(log_fwd, log_ss, log_shocks_ss)
-          psi_cur = lambda log_cur: psi(log_ss, log_cur, log_shocks_ss)
-          psi_shocks = lambda log_shocks: psi(log_ss, log_ss, log_shocks)
-          
-          A_num = self._approx_fprime(log_ss, psi_fwd)
-          B_num = self._approx_fprime(log_ss, psi_cur)
-          C_num = self._approx_fprime(log_shocks_ss, psi_shocks)
-          
-      else:
-          def psi(vars_fwd, vars_cur, shocks=None):
-              residuals = np.zeros(len(self.equations_list))
-              shocks = shocks if shocks is not None else np.zeros(len(shock_names))
-              
-              for i, eq in enumerate(self.equations_list):
-                  tp1_terms, t_terms, shock_terms = self._parse_equations(eq)
-                  if debug:
-                      print(f"Equation {i+1}: {eq}, shock_terms: {shock_terms}")
-                  
-                  subs = {Symbol(f"{var}_t"): vars_cur[j] for j, var in enumerate(self.variables)}
-                  subs.update({Symbol(f"{var}_tp1"): vars_fwd[j] for j, var in enumerate(self.variables)})
-                  
-                  # Handle shocks - substitute shock symbols directly
-                  for j, shock in enumerate(shock_names):
-                      subs[Symbol(shock)] = shocks[j]
-                  
-                  subs.update(parameters)
-                  
-                  # Correct expression: tp1_terms - t_terms - shock_terms
-                  expr = tp1_terms - t_terms - shock_terms
-                  
-                  if debug:
-                      print(f"Equation {i+1} expr before subs: {expr}")
-                  
-                  expr = expr.subs(subs)
-                  
-                  try:
-                      residuals[i] = float(expr)
-                  except (ValueError, TypeError) as e:
-                      if debug:
-                          print(f"Error evaluating equation {i+1}: {eq}, expr: {expr}, error: {e}")
-                      residuals[i] = np.nan
-              
-              if debug:
-                  print(f"Non-log-linear residuals (fwd={vars_fwd}, cur={vars_cur}, shocks={shocks}): {residuals}")
-              return residuals
+            log_ss = np.log(e_s)
+            log_shocks_ss = np.zeros(len(shock_names))
+            
+            psi_fwd = lambda log_fwd: psi(log_fwd, log_ss, log_shocks_ss)
+            psi_cur = lambda log_cur: psi(log_ss, log_cur, log_shocks_ss)
+            psi_shocks = lambda log_shocks: psi(log_ss, log_ss, log_shocks)
+            
+            A_num = self._approx_fprime(log_ss, psi_fwd)
+            B_num = self._approx_fprime(log_ss, psi_cur)
+            C_num = self._approx_fprime(log_shocks_ss, psi_shocks)
+            
+        else:
+            def psi(vars_fwd, vars_cur, shocks=None):
+                residuals = np.zeros(len(self.equations_list))
+                shocks = shocks if shocks is not None else np.zeros(len(shock_names))
+                
+                for i, eq in enumerate(self.equations_list):
+                    tp1_terms, t_terms, shock_terms = self._parse_equations(eq)
+                    if debug:
+                        print(f"Equation {i+1}: {eq}, shock_terms: {shock_terms}")
+                    
+                    subs = {Symbol(f"{var}_t"): vars_cur[j] for j, var in enumerate(ordered_vars)}
+                    subs.update({Symbol(f"{var}_tp1"): vars_fwd[j] for j, var in enumerate(ordered_vars)})
+                    for j, shock in enumerate(shock_names):
+                        subs[Symbol(shock)] = shocks[j]
+                    
+                    subs.update(parameters)
+                    
+                    expr = tp1_terms - t_terms - shock_terms
+                    
+                    if debug:
+                        print(f"Equation {i+1} expr before subs: {expr}")
+                    
+                    expr = expr.subs(subs)
+                    
+                    try:
+                        residuals[i] = float(expr)
+                    except (ValueError, TypeError) as e:
+                        if debug:
+                            print(f"Error evaluating equation {i+1}: {eq}, expr: {expr}, error: {e}")
+                        residuals[i] = np.nan
+                
+                # Reorder residuals according to reorder_idx
+                reordered_residuals = np.zeros_like(residuals)
+                for i, idx in enumerate(reorder_idx):
+                    reordered_residuals[idx] = residuals[i]
+                
+                if debug:
+                    print(f"Non-log-linear residuals (fwd={vars_fwd}, cur={vars_cur}, shocks={shocks}): {reordered_residuals}")
+                return reordered_residuals
 
-          psi_fwd = lambda fwd: psi(fwd, e_s)
-          psi_cur = lambda cur: -psi(e_s, cur)
-          psi_shocks = lambda shocks: -psi(e_s, e_s, shocks)
-          
-          A_num = self._approx_fprime(e_s, psi_fwd)
-          B_num = self._approx_fprime(e_s, psi_cur)
-          C_num = self._approx_fprime(np.zeros(len(shock_names)), psi_shocks)
-          
-          # Check residuals for perturbed shocks
-          if debug:
-              for j, shock in enumerate(shock_names):
-                  eps = 1e-6
-                  shocks_pert = np.zeros(len(shock_names))
-                  shocks_pert[j] = eps
-                  residuals_pert = psi(e_s, e_s, shocks_pert)
-                  residuals_base = psi(e_s, e_s, np.zeros(len(shock_names)))
-                  deriv = (residuals_pert - residuals_base) / eps
-                  print(f"Shock {shock} perturbation: residuals_pert={residuals_pert}, residuals_base={residuals_base}")
-                  print(f"Shock {shock} numerical derivative: {deriv}")
+            psi_fwd = lambda fwd: psi(fwd, e_s)
+            psi_cur = lambda cur: -psi(e_s, cur)
+            psi_shocks = lambda shocks: -psi(e_s, e_s, shocks)
+            
+            A_num = self._approx_fprime(e_s, psi_fwd)
+            B_num = self._approx_fprime(e_s, psi_cur)
+            C_num = self._approx_fprime(np.zeros(len(shock_names)), psi_shocks)
+            
+            if debug:
+                for j, shock in enumerate(shock_names):
+                    eps = 1e-6
+                    shocks_pert = np.zeros(len(shock_names))
+                    shocks_pert[j] = eps
+                    residuals_pert = psi(e_s, e_s, shocks_pert)
+                    residuals_base = psi(e_s, e_s, np.zeros(len(shock_names)))
+                    deriv = (residuals_pert - residuals_base) / eps
+                    print(f"Shock {shock} perturbation: residuals_pert={residuals_pert}, residuals_base={residuals_base}")
+                    print(f"Shock {shock} numerical derivative: {deriv}")
 
-      self.A_num = A_num
-      self.B_num = B_num
-      self.C_num = C_num
-      
-      print("Numerical Jacobian A:\n", A_num)
-      print("Numerical Jacobian B:\n", B_num)
-      print("Numerical Jacobian C:\n", C_num)
-      
-      if np.allclose(C_num, 0) and shock_names:
-          print("Warning: C_num matrix is all zeros despite shocks. Check equation specifications or _parse_equation logic.")
+        self.A_num = A_num
+        self.B_num = B_num
+        self.C_num = C_num
+        
+        if debug:
+            print("Numerical Jacobian A:\n", A_num)
+            print("Numerical Jacobian B:\n", B_num)
+            print("Numerical Jacobian C:\n", C_num)
+            if np.allclose(C_num, 0) and shock_names:
+                print("Warning: C_num matrix is all zeros despite shocks. Check equation specifications or _parse_equation logic.")
 
-      return A_num, B_num, C_num
-
+        return A_num, B_num, C_num
   def approximate(self, method=None, debug=False):
       """
       Approximates the RE model around its steady state using analytical or numerical methods.
@@ -691,31 +760,25 @@ class linear_dsge():
       if self.steady_state is None:
           raise ValueError("Steady state not computed. Call compute_ss() first.")
       if self.approximated==True:
-         raise ValueError("The system is already approximated.")
+         warnings.warn("The system is already approximated.")
       # Default to analytical method if not specified
       method = method.lower() if method else 'analytical'
-
       if method == 'analytical':
           A, B, C = self._Analytical_jacobians(debug=debug)
       elif method == 'numerical':
           A, B, C = self._Numerical_jacobians(debug=debug)
       else:
           raise ValueError("Method must be 'analytical' or 'numerical'.")
-
-      # Store Jacobians
       self.A = A
       self.B = B
       self.C = C
       self.approximated = True
-
       if debug:
           print(f"Approximation ({self.approximation}) completed with method: {method}")
           print(f"Jacobian A:\n{A}")
           print(f"Jacobian B:\n{B}")
           print(f"Jacobian C:\n{C}")
-
       return A, B, C
-
   def solve_RE_model(self, Parameters=None,debug=False):
         """
         Solves the rational expectations model A E_t[y_{t+1}] = B y_t + C epsilon_t.
@@ -730,21 +793,17 @@ class linear_dsge():
         """
         if not self.approximated:
             raise ValueError("Model not approximated. Call approximate() first.")
-
-        # Update parameters and compute Jacobians if provided
         if Parameters is not None:
             self.parameters = Parameters
             A, B, C = self._Analytical_jacobians(debug=debug)
         else:
             A, B, C = self.A, self.B, self.C
-        # Validate Jacobians
         if A is None or B is None or C is None:
             raise ValueError("Jacobians A, B, C must be provided or computed via approximate().")
-
-        # Validate model dimensions
         if self.n_states == 0 or self.n_controls == 0:
             raise ValueError("Model must have states and controls defined.")
-
+        # print('A',A)
+        # print('B',B)
         def solve_klein(A, B, C, nk):
             """
             Solve using Klein's method (generalized Schur decomposition).
@@ -766,40 +825,28 @@ class linear_dsge():
                 print(f"Model dimensions: n={n}, nk={nk}, ns={ns}")
                 print(f"Matrix shapes: A={A.shape}, B={B.shape}, C={C.shape if C is not None else None}")
                 print(f"Variable order: {self.variables[:nk]} (states) + {self.variables[nk:]} (controls)")
-
-            # QZ decomposition
             try:
                 S, T, alpha, beta, Q, Z = ordqz(A, B, sort='ouc', output='complex')
             except Exception as e:
                 raise ValueError(f"QZ decomposition failed: {e}")
-
-            # Eigenvalue analysis
             eigenvals = np.abs(beta / alpha)
             if debug:
                 print(f"QZ eigenvalues (should have {nk} stable): {eigenvals}")
-
-            # Partition QZ results
             z11 = Z[:nk, :nk]
             z21 = Z[nk:, :nk]
             s11 = S[:nk, :nk]
             t11 = T[:nk, :nk]
-
-            # Invertibility check
+            #print(nk)
             if np.linalg.matrix_rank(z11) < nk:
                 raise ValueError("Invertibility condition violated: z11 is singular")
-
-            # Stability check
             stable_count = sum(eigenvals < 1)
             if debug:
                 print(f"Stable eigenvalues: {stable_count}/{nk} (should be {nk})")
             if stable_count != nk:
                 print("Warning: Blanchard-Kahn conditions may not be satisfied")
-
-            # Compute policy and transition functions
             z11_inv = np.linalg.inv(z11)
             P = np.real(z11 @ np.linalg.solve(s11, t11) @ z11_inv)
             F = np.real(z21 @ z11_inv)
-
             # Store results
             self.f = F
             self.p = P
@@ -807,15 +854,11 @@ class linear_dsge():
                 print(f"\nFinal matrices:")
                 print(f"F (controls = F * states): {F.shape}")
                 print(f"P (state transition): {P.shape}")
-
             return F, P
-
         # Solve using Klein's method
         F, P = solve_klein(A, B, C, self.n_states)
         return F, P
-   #################################
-
-
+#################################
   def _compute_irfs(self, T=51, t0=1, shocks=None, center=True, normalize=True):
       """
       Compute impulse response functions (IRFs) adjusted to match the behavior of the impulse method.
