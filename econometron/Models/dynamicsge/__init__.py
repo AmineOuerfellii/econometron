@@ -9,7 +9,10 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.linalg import ordqz
 import warnings
-
+from econometron.utils.projection import ProjectionSolver
+########
+from abc import ABC, abstractmethod
+from typing import Dict, Tuple, Optional, Callable
 ####################
 __all__ = ['linear_dsge', 'nonlinear_dsge']
 ####
@@ -110,7 +113,14 @@ class linear_dsge():
     if self.normalize and not isinstance(self.normalize, dict):
         warnings.warn("Normalize should be a dictionary mapping variable names to values.", stacklevel=2)
     return True
-
+  def set_new_pramaters(self,params):
+      try:
+          self.parameters.update(params)
+          print('parameters updated:', self.parameters)
+      except Exception as e:
+          print(e)
+          warnings.warn("parameters are unupdated")
+      
   def set_initial_guess(self, initial_guess):
     """
     this function sets the initial guess for the model
@@ -1150,7 +1160,9 @@ class linear_dsge():
         sim_out = sim_out / ss_values
 
     # Create DataFrame with simulated variables
-    sim_df = pd.DataFrame(sim_out, columns=var_cols)
+    vars_ord=self._reorder_variables()
+    col_names = [f"{v}_t" for v in vars_ord]
+    sim_df = pd.DataFrame(sim_out, columns=col_names)
 
     # Include shocks
     shock_cols = [f"{sh}_t" for sh in self.shocks]
@@ -1185,6 +1197,7 @@ class linear_dsge():
 
     # Identify columns
     shock_cols = [f"{sh}_t" for sh in self.shocks]
+    #print(self.exo_states)
     exo_state_cols = [f"{s}_t" for s in self.exo_states if f"{s}_t" in self.simulated.columns]
     endo_cols = [f"{v}_t" for v in self.variables if v not in self.exo_states and f"{v}_t" in self.simulated.columns]
 
@@ -1229,18 +1242,707 @@ class linear_dsge():
 ############################################################################################
 ########################### Non Linear DSGE ################################################
 ############################################################################################
-from abc import ABC, abstractmethod
+import numpy as np
+import matplotlib.pyplot as plt
+from typing import Dict, List, Callable, Optional, Tuple, Any
+from dataclasses import dataclass, field
+import inspect
+import warnings
 
-class nonlinear_dsge(ABC):
-    def __init__(self, params):
-        self.params = params
+@dataclass
+class DSGEVariable:
+    """Represents a DSGE model variable with its properties."""
+    name: str
+    bounds: Tuple[float, float]
+    steady_state: Optional[float] = None
+    description: str = ""
+    is_state: bool = True
+    is_control: bool = False
+    is_shock: bool = False
 
-    @abstractmethod
-    def residual(self, coeffs, state, basis, policy_func):
-        pass
+@dataclass
+class DSGEParameter:
+    """Represents a DSGE model parameter."""
+    name: str
+    value: float
+    description: str = ""
+    bounds: Optional[Tuple[float, float]] = None
 
-    @abstractmethod
-    def initial_guess(self, basis):
-        pass
-
-
+class nonlinear_dsge:
+    """
+    General-purpose nonlinear DSGE model solver using projection methods.
+    
+    This class provides a flexible framework for solving DSGE models with:
+    - Arbitrary state and control variables
+    - User-defined equilibrium conditions
+    - Multiple solution algorithms (collocation, Galerkin, least squares)
+    - Comprehensive solution analysis and validation
+    
+    The class maintains full theoretical rigor while providing an intuitive interface
+    for economists to specify and solve their models.
+    """
+    
+    def __init__(self, name: str = "DSGE Model"):
+        """Initialize the DSGE model framework."""
+        self.name = name
+        self.parameters: Dict[str, DSGEParameter] = {}
+        self.variables: Dict[str, DSGEVariable] = {}
+        self.equations: List[Callable] = []
+        self.utility_function: Optional[Callable] = None
+        self.production_function: Optional[Callable] = None
+        self.shock_processes: Dict[str, Dict] = {}
+        
+        # Solution components
+        self.solver = None
+        self.coefficients = None
+        self.solution_info = None
+        self.is_solved = False
+        
+        # State organization
+        self.state_vars: List[str] = []
+        self.control_vars: List[str] = []
+        self.shock_vars: List[str] = []
+        
+        print(f"Initialized {self.name}")
+    
+    def add_parameter(self, name: str, value: float, description: str = "", 
+                     bounds: Optional[Tuple[float, float]] = None):
+        """Add a parameter to the model."""
+        self.parameters[name] = DSGEParameter(name, value, description, bounds)
+        # Make parameter accessible as attribute for convenience
+        setattr(self, name, value)
+        return self
+    
+    def add_variable(self, name: str, bounds: Tuple[float, float], 
+                    steady_state: Optional[float] = None,
+                    description: str = "", variable_type: str = "state"):
+        """Add a variable to the model."""
+        is_state = variable_type in ["state", "both"]
+        is_control = variable_type in ["control", "both"] 
+        is_shock = variable_type == "shock"
+        
+        self.variables[name] = DSGEVariable(
+            name, bounds, steady_state, description, is_state, is_control, is_shock
+        )
+        
+        # Organize variables by type
+        if is_state:
+            self.state_vars.append(name)
+        if is_control:
+            self.control_vars.append(name)
+        if is_shock:
+            self.shock_vars.append(name)
+            
+        return self
+    
+    def set_utility_function(self, utility_func: Callable, marginal_utility_func: Optional[Callable] = None):
+        """Set the utility function and optionally its derivative."""
+        self.utility_function = utility_func
+        if marginal_utility_func:
+            self.marginal_utility_function = marginal_utility_func
+        else:
+            # Try to compute numerical derivative if not provided
+            self.marginal_utility_function = self._numerical_derivative(utility_func)
+        return self
+    
+    def set_production_function(self, production_func: Callable):
+        """Set the production function."""
+        self.production_function = production_func
+        return self
+    
+    def add_shock_process(self, shock_name: str, persistence: float, 
+                         volatility: float, process_type: str = "AR1"):
+        """Add a stochastic shock process."""
+        self.shock_processes[shock_name] = {
+            'persistence': persistence,
+            'volatility': volatility,
+            'type': process_type
+        }
+        return self
+    
+    def add_equilibrium_condition(self, equation_func: Callable):
+        """Add an equilibrium condition (e.g., Euler equation, FOC)."""
+        self.equations.append(equation_func)
+        return self
+    
+    def compute_steady_state(self, method: str = "analytical"):
+        """Compute model steady state."""
+        if method == "analytical":
+            # User should provide analytical steady state values
+            for var_name, var in self.variables.items():
+                if var.steady_state is None:
+                    warnings.warn(f"No steady state provided for {var_name}")
+        elif method == "numerical":
+            # Implement numerical steady state solver
+            self._solve_steady_state_numerically()
+        
+        # Update variable steady states and print summary
+        print("\n=== STEADY STATE ===")
+        for var_name, var in self.variables.items():
+            if var.steady_state is not None:
+                print(f"  {var_name}: {var.steady_state:.6f}")
+        
+        return self
+    
+    def setup_solver(self, approximation_orders: Dict[str, int]):
+        """Set up the projection solver with specified polynomial orders."""
+        # Organize variables in consistent order
+        all_vars = self.state_vars + self.shock_vars
+        
+        order_vector = [approximation_orders.get(var, 5) for var in all_vars]
+        lower_bounds = [self.variables[var].bounds[0] for var in all_vars]
+        upper_bounds = [self.variables[var].bounds[1] for var in all_vars]
+        
+        # Import and initialize the ProjectionSolver
+        self.solver = ProjectionSolver(order_vector, lower_bounds, upper_bounds)
+        
+        print(f"\nSolver initialized:")
+        print(f"  Variables: {all_vars}")
+        print(f"  Polynomial orders: {dict(zip(all_vars, order_vector))}")
+        print(f"  Basis functions: {self.solver.basis_size}")
+        
+        return self
+    
+    def _create_residual_function(self):
+        """Create the residual function for the solver."""
+        def residual_function(grid, policy_values, coeffs):
+            """
+            Evaluate equilibrium condition residuals at grid points.
+            
+            Parameters:
+            -----------
+            grid : ndarray
+                State space grid points (n_points x n_states)
+            policy_values : ndarray  
+                Policy function values at grid points
+            coeffs : ndarray
+                Current coefficient guess
+                
+            Returns:
+            --------
+            residuals : ndarray
+                Residual values at each grid point
+            """
+            n_points = grid.shape[0]
+            residuals = np.zeros(n_points)
+            
+            # Get shock process parameters for expectation calculation
+            shock_info = list(self.shock_processes.values())[0] if self.shock_processes else None
+            
+            for i in range(n_points):
+                # Current state values
+                current_state = self._grid_to_state_dict(grid[i])
+                
+                # Policy function gives us control variables
+                if len(self.control_vars) == 1:
+                    current_state[self.control_vars[0]] = policy_values[i]
+                else:
+                    for j, control_var in enumerate(self.control_vars):
+                        current_state[control_var] = policy_values[i, j] if policy_values.ndim > 1 else policy_values[i]
+                
+                # Evaluate equilibrium conditions
+                residual_sum = 0.0
+                
+                for eq_func in self.equations:
+                    try:
+                        # If equation involves expectations, compute them
+                        if self._equation_has_expectations(eq_func):
+                            residual_sum += self._evaluate_equation_with_expectations(
+                                eq_func, current_state, grid[i], coeffs, shock_info
+                            )
+                        else:
+                            residual_sum += eq_func(current_state, self.parameters)
+                    except Exception as e:
+                        residuals[i] = 1e6  # Penalty for evaluation errors
+                        break
+                else:
+                    residuals[i] = residual_sum
+            
+            return residuals
+        
+        return residual_function
+    
+    def _grid_to_state_dict(self, grid_point):
+        """Convert grid point to state dictionary."""
+        state_dict = {}
+        all_vars = self.state_vars + self.shock_vars
+        for i, var_name in enumerate(all_vars):
+            state_dict[var_name] = grid_point[i]
+        return state_dict
+    
+    def _equation_has_expectations(self, equation_func: Callable) -> bool:
+        """Check if equation involves expectations (heuristic based on signature)."""
+        sig = inspect.signature(equation_func)
+        return len(sig.parameters) > 2  # More than (state, params) suggests expectations
+    
+    def _evaluate_equation_with_expectations(self, eq_func, current_state, grid_point, coeffs, shock_info):
+        """Evaluate equation involving expectations using quadrature."""
+        if shock_info is None:
+            return eq_func(current_state, self.parameters)
+        
+        # Gauss-Hermite quadrature for expectations
+        n_nodes = 5
+        nodes, weights = self.solver.cheb_basis.gauss_hermite_nodes(n_nodes, shock_info['volatility'])
+        
+        expectation = 0.0
+        for node, weight in zip(nodes, weights):
+            # Compute next period shock
+            current_shock = current_state.get(self.shock_vars[0], 1.0) if self.shock_vars else 1.0
+            next_shock = np.exp(shock_info['persistence'] * np.log(current_shock) + 
+                              shock_info['volatility'] * np.log(node))
+            
+            # Create next period state
+            next_state = current_state.copy()
+            if self.shock_vars:
+                next_state[self.shock_vars[0]] = next_shock
+            
+            # Evaluate equation for this realization
+            try:
+                value = eq_func(current_state, self.parameters, next_state, self.solver, coeffs)
+                expectation += weight * value
+            except:
+                expectation += weight * 1e6  # Penalty for errors
+        
+        return expectation
+    
+    def solve(self, method: str = "collocation", 
+              initial_policy: Optional[Callable] = None,
+              solver_options: Optional[Dict] = None,
+              verbose: bool = True) -> 'nonlinear_dsge':
+        """
+        Solve the DSGE model using specified projection method.
+        
+        Parameters:
+        -----------
+        method : str
+            Solution method: 'collocation', 'galerkin', or 'least_squares'
+        initial_policy : callable, optional
+            Function to generate initial policy guess
+        solver_options : dict, optional
+            Additional options for the solver
+        verbose : bool
+            Print solution progress
+            
+        Returns:
+        --------
+        self : NonlinearDSGE
+            Returns self for method chaining
+        """
+        if self.solver is None:
+            raise ValueError("Must call setup_solver() before solve()")
+        
+        if not self.equations:
+            raise ValueError("No equilibrium conditions specified")
+        
+        # Set default solver options
+        default_options = {'maxit': 5000, 'stopc': 1e-8}
+        options = {**default_options, **(solver_options or {})}
+        
+        # Create initial guess
+        if initial_policy is None:
+            initial_guess = self._default_initial_guess()
+        else:
+            initial_guess = self._create_initial_guess(initial_policy)
+        
+        # Create residual function
+        residual_func = self._create_residual_function()
+        
+        print(f"\nSolving {self.name} using {method} method...")
+        
+        # Solve using specified method
+        if method == "collocation":
+            coeffs, crit = self.solver.solve_collocation(
+                residual_func, initial_guess, verbose=verbose, **options
+            )
+        elif method == "galerkin":
+            coeffs, crit = self.solver.solve_galerkin(
+                residual_func, initial_guess, verbose=verbose, **options
+            )
+        elif method == "least_squares":
+            coeffs, crit = self.solver.solve_least_squares(
+                residual_func, initial_guess, verbose=verbose, **options
+            )
+        else:
+            raise ValueError(f"Unknown solution method: {method}")
+        
+        # Store solution
+        self.coefficients = coeffs
+        self.solution_info = {
+            'method': method,
+            'convergence': crit,
+            'converged': crit[1] < options['stopc']
+        }
+        self.is_solved = True
+        
+        if verbose:
+            print(f"\nSolution completed!")
+            print(f"  Converged: {self.solution_info['converged']}")
+            print(f"  Final criterion: {crit[1]:.2e}")
+            print(f"  Iterations: {int(crit[4])}")
+        
+        return self
+    
+    def _default_initial_guess(self):
+        """Create default initial guess based on steady states."""
+        nodes = self.solver.cheb_basis.funnode()
+        grid = self.solver.cheb_basis.gridmake(nodes)
+        
+        # Simple constant policy at steady state values
+        if self.control_vars:
+            control_ss = self.variables[self.control_vars[0]].steady_state
+            if control_ss is None:
+                control_ss = np.mean([self.variables[self.control_vars[0]].bounds])
+            initial_values = np.full(grid.shape[0], control_ss)
+        else:
+            initial_values = np.zeros(grid.shape[0])
+        
+        # Fit to basis
+        basis_matrix = self.solver.cheb_basis.funbas(grid)
+        coeffs = np.linalg.lstsq(basis_matrix, initial_values, rcond=None)[0]
+        return coeffs
+    
+    def _create_initial_guess(self, policy_func: Callable):
+        """Create initial guess from user-provided policy function."""
+        nodes = self.solver.cheb_basis.funnode()
+        grid = self.solver.cheb_basis.gridmake(nodes)
+        
+        initial_values = np.zeros(grid.shape[0])
+        for i, grid_point in enumerate(grid):
+            state_dict = self._grid_to_state_dict(grid_point)
+            initial_values[i] = policy_func(state_dict, self.parameters)
+        
+        # Fit to basis
+        basis_matrix = self.solver.cheb_basis.funbas(grid)
+        coeffs = np.linalg.lstsq(basis_matrix, initial_values, rcond=None)[0]
+        return coeffs
+    
+    def evaluate_policy(self, state_points: np.ndarray) -> np.ndarray:
+        """
+        Evaluate the solved policy function at given state points.
+        
+        Parameters:
+        -----------
+        state_points : ndarray
+            State space points where to evaluate policy (n_points x n_states)
+            
+        Returns:
+        --------
+        policy_values : ndarray
+            Policy function values at the points
+        """
+        if not self.is_solved:
+            raise ValueError("Model must be solved before evaluating policy")
+        
+        return self.solver.evaluate_solution(self.coefficients, state_points)
+    
+    def validate_solution(self, n_test_points: int = 100, 
+                         random_seed: Optional[int] = None) -> Dict[str, float]:
+        """
+        Validate the solution by checking equilibrium conditions.
+        
+        Parameters:
+        -----------
+        n_test_points : int
+            Number of random test points
+        random_seed : int, optional
+            Random seed for reproducibility
+            
+        Returns:
+        --------
+        validation_metrics : dict
+            Dictionary containing various error metrics
+        """
+        if not self.is_solved:
+            raise ValueError("Model must be solved before validation")
+        
+        if random_seed is not None:
+            np.random.seed(random_seed)
+        
+        # Generate random test points
+        test_points = np.zeros((n_test_points, len(self.state_vars) + len(self.shock_vars)))
+        all_vars = self.state_vars + self.shock_vars
+        
+        for i, var_name in enumerate(all_vars):
+            bounds = self.variables[var_name].bounds
+            test_points[:, i] = np.random.uniform(bounds[0], bounds[1], n_test_points)
+        
+        # Evaluate policy and residuals
+        test_policy = self.evaluate_policy(test_points)
+        residual_func = self._create_residual_function()
+        test_residuals = residual_func(test_points, test_policy, self.coefficients)
+        
+        # Compute validation metrics
+        metrics = {
+            'mean_abs_error': np.mean(np.abs(test_residuals)),
+            'max_abs_error': np.max(np.abs(test_residuals)),
+            'rms_error': np.sqrt(np.mean(test_residuals**2)),
+            'l_infinity_norm': np.max(np.abs(test_residuals)),
+            'n_test_points': n_test_points
+        }
+        
+        print(f"\n=== SOLUTION VALIDATION ===")
+        print(f"Equilibrium condition errors at {n_test_points} random points:")
+        print(f"  Mean absolute error: {metrics['mean_abs_error']:.2e}")
+        print(f"  Maximum absolute error: {metrics['max_abs_error']:.2e}")
+        print(f"  RMS error: {metrics['rms_error']:.2e}")
+        print(f"  L∞ norm: {metrics['l_infinity_norm']:.2e}")
+        
+        return metrics
+    
+    def analyze_policy(self, n_plot_points: int = 50, 
+                      shock_values: Optional[List[float]] = None,
+                      figsize: Tuple[int, int] = (15, 10)):
+        """
+        Analyze and visualize the solved policy functions.
+        
+        Parameters:
+        -----------
+        n_plot_points : int
+            Number of points for plotting
+        shock_values : list, optional
+            Specific shock values to analyze
+        figsize : tuple
+            Figure size for plots
+        """
+        if not self.is_solved:
+            raise ValueError("Model must be solved before analysis")
+        
+        if len(self.state_vars) == 0:
+            print("No state variables to plot")
+            return
+        
+        # Default shock values if not provided
+        if shock_values is None and self.shock_vars:
+            shock_var = self.shock_vars[0]
+            bounds = self.variables[shock_var].bounds
+            shock_values = [bounds[0], (bounds[0] + bounds[1])/2, bounds[1]]
+        elif not self.shock_vars:
+            shock_values = [1.0]  # No shocks case
+        
+        # Create evaluation grid for first state variable
+        state_var = self.state_vars[0]
+        state_bounds = self.variables[state_var].bounds
+        state_eval = np.linspace(state_bounds[0], state_bounds[1], n_plot_points)
+        
+        # Set up plots
+        n_plots = 2 if len(self.control_vars) > 0 else 1
+        fig, axes = plt.subplots(1, n_plots, figsize=figsize)
+        if n_plots == 1:
+            axes = [axes]
+        
+        # Plot policy functions
+        for shock_val in shock_values:
+            # Create evaluation grid
+            if len(self.shock_vars) > 0:
+                grid_eval = np.column_stack([state_eval, 
+                                           np.full(n_plot_points, shock_val)])
+            else:
+                grid_eval = state_eval.reshape(-1, 1)
+            
+            # Evaluate policy
+            policy_values = self.evaluate_policy(grid_eval)
+            
+            # Plot policy function
+            axes[0].plot(state_eval, policy_values, 
+                        label=f'{self.shock_vars[0] if self.shock_vars else "No shock"}={shock_val:.2f}')
+        
+        axes[0].set_xlabel(f'{state_var}')
+        axes[0].set_ylabel(f'{self.control_vars[0] if self.control_vars else "Policy"}')
+        axes[0].set_title('Policy Function')
+        axes[0].legend()
+        axes[0].grid(True, alpha=0.3)
+        
+        # Plot consumption/savings rate if applicable
+        if n_plots > 1 and self.production_function:
+            for shock_val in shock_values:
+                if len(self.shock_vars) > 0:
+                    grid_eval = np.column_stack([state_eval, 
+                                               np.full(n_plot_points, shock_val)])
+                else:
+                    grid_eval = state_eval.reshape(-1, 1)
+                
+                policy_values = self.evaluate_policy(grid_eval)
+                
+                # Compute implied consumption or savings rate
+                production_values = np.array([
+                    self.production_function(self._grid_to_state_dict(point), self.parameters)
+                    for point in grid_eval
+                ])
+                
+                savings_rate = policy_values / production_values
+                axes[1].plot(state_eval, savings_rate, 
+                           label=f'{self.shock_vars[0] if self.shock_vars else "No shock"}={shock_val:.2f}')
+            
+            axes[1].set_xlabel(f'{state_var}')
+            axes[1].set_ylabel('Savings Rate')
+            axes[1].set_title('Optimal Savings Rate')
+            axes[1].legend()
+            axes[1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.show()
+        
+        return self
+    
+    def simulate(self, T: int, initial_state: Optional[Dict] = None, 
+                random_seed: Optional[int] = None) -> Dict[str, np.ndarray]:
+        """
+        Simulate the model for T periods.
+        
+        Parameters:
+        -----------
+        T : int
+            Number of periods to simulate
+        initial_state : dict, optional
+            Initial state values (default: steady state)
+        random_seed : int, optional
+            Random seed for shock simulation
+            
+        Returns:
+        --------
+        simulation : dict
+            Dictionary with time series for all variables
+        """
+        if not self.is_solved:
+            raise ValueError("Model must be solved before simulation")
+        
+        if random_seed is not None:
+            np.random.seed(random_seed)
+        
+        # Initialize simulation arrays
+        simulation = {}
+        all_vars = self.state_vars + self.control_vars + self.shock_vars
+        for var in all_vars:
+            simulation[var] = np.zeros(T)
+        
+        # Set initial conditions
+        if initial_state is None:
+            for var in all_vars:
+                if self.variables[var].steady_state is not None:
+                    simulation[var][0] = self.variables[var].steady_state
+                else:
+                    bounds = self.variables[var].bounds
+                    simulation[var][0] = (bounds[0] + bounds[1]) / 2
+        else:
+            for var, value in initial_state.items():
+                simulation[var][0] = value
+        
+        # Simulate forward
+        for t in range(T-1):
+            # Current state point
+            current_point = np.array([[simulation[var][t] for var in self.state_vars + self.shock_vars]])
+            
+            # Evaluate policy
+            policy_value = self.evaluate_policy(current_point)[0]
+            if self.control_vars:
+                simulation[self.control_vars[0]][t] = policy_value
+            
+            # Update state variables according to transition equations
+            self._update_state_variables(simulation, t)
+            
+            # Update shock processes
+            self._update_shocks(simulation, t)
+        
+        # Final period policy
+        if t == T-2:  # Fill in last period
+            final_point = np.array([[simulation[var][T-1] for var in self.state_vars + self.shock_vars]])
+            policy_value = self.evaluate_policy(final_point)[0]
+            if self.control_vars:
+                simulation[self.control_vars[0]][T-1] = policy_value
+        
+        return simulation
+    
+    def _update_state_variables(self, simulation: Dict, t: int):
+        """Update state variables based on model dynamics."""
+        # This is model-specific and should be overridden or specified by user
+        # For now, implement a generic capital accumulation
+        if 'k' in self.state_vars and 'k' in self.control_vars:
+            simulation['k'][t+1] = simulation['k'][t]  # Identity for now
+    
+    def _update_shocks(self, simulation: Dict, t: int):
+        """Update shock processes."""
+        for shock_var in self.shock_vars:
+            if shock_var in self.shock_processes:
+                process = self.shock_processes[shock_var]
+                ρ = process['persistence']
+                σ = process['volatility']
+                ε = np.random.normal(0, 1)
+                
+                current_shock = simulation[shock_var][t]
+                simulation[shock_var][t+1] = np.exp(ρ * np.log(current_shock) + σ * ε)
+    
+    def summary(self):
+        """Print a comprehensive summary of the model."""
+        print(f"\n{'='*50}")
+        print(f"{self.name.upper()} - MODEL SUMMARY")
+        print(f"{'='*50}")
+        
+        print(f"\nPARAMETERS ({len(self.parameters)}):")
+        for param in self.parameters.values():
+            bounds_str = f" ∈ {param.bounds}" if param.bounds else ""
+            print(f"  {param.name} = {param.value:.4f}{bounds_str}")
+            if param.description:
+                print(f"    {param.description}")
+        
+        print(f"\nVARIABLES ({len(self.variables)}):")
+        for var in self.variables.values():
+            type_str = []
+            if var.is_state: type_str.append("state")
+            if var.is_control: type_str.append("control") 
+            if var.is_shock: type_str.append("shock")
+            
+            ss_str = f", ss={var.steady_state:.4f}" if var.steady_state else ""
+            print(f"  {var.name} ∈ {var.bounds} ({'/'.join(type_str)}{ss_str})")
+            if var.description:
+                print(f"    {var.description}")
+        
+        print(f"\nEQUILIBRIUM CONDITIONS ({len(self.equations)}):")
+        for i, eq in enumerate(self.equations):
+            print(f"  {i+1}. {eq.__name__ if hasattr(eq, '__name__') else 'Equation'}")
+        
+        if self.is_solved:
+            print(f"\nSOLUTION STATUS:")
+            print(f"  Method: {self.solution_info['method']}")
+            print(f"  Converged: {self.solution_info['converged']}")
+            print(f"  Final error: {self.solution_info['convergence'][1]:.2e}")
+        else:
+            print(f"\nSOLUTION STATUS: Not solved")
+    
+    def _numerical_derivative(self, func: Callable, h: float = 1e-8):
+        """Create numerical derivative function."""
+        def derivative(x):
+            return (func(x + h) - func(x - h)) / (2 * h)
+        return derivative
+    
+    # def export_solution(self, filename: str):
+    #     """Export solution coefficients and model info to file."""
+    #     if not self.is_solved:
+    #         raise ValueError("Model must be solved before export")
+        
+    #     export_data = {
+    #         'model_name': self.name,
+    #         'parameters': {name: param.value for name, param in self.parameters.items()},
+    #         'variables': {name: {'bounds': var.bounds, 'steady_state': var.steady_state} 
+    #                      for name, var in self.variables.items()},
+    #         'coefficients': self.coefficients.tolist(),
+    #         'solution_info': self.solution_info
+    #     }
+        
+    #     import json
+    #     with open(filename, 'w') as f:
+    #         json.dump(export_data, f, indent=2)
+        
+    #     print(f"Solution exported to {filename}")
+    
+    # def load_solution(self, filename: str):
+    #     """Load solution from file."""
+    #     import json
+    #     with open(filename, 'r') as f:
+    #         data = json.load(f)
+        
+    #     self.coefficients = np.array(data['coefficients'])
+    #     self.solution_info = data['solution_info']
+    #     self.is_solved = True
+        
+    #     print(f"Solution loaded from {filename}")
+    #     return self

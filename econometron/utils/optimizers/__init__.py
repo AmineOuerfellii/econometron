@@ -2,14 +2,18 @@ from numpy.random import uniform, rand, seed
 from colorama import Fore, Style  # Assuming these are imported for colored output
 import numpy as np
 from scipy.stats import norm
+import numpy.random as npr
+from econometron.utils.solver import Root
 ####################################################### Evaluation Function ##################################################
-__all__ = ['evaluate_func','genetic_algorithm','simulated_annealing','rwm','compute_proposal_sigma','minimize_qn']
+__all__ = ['evaluate_func','genetic_algorithm','simulated_annealing','rwm','minimize_qn']
 
 
 def evaluate_func(function, params):
+    print('current evaluated vector of parameters: \n', params)
     return function(params) if callable(function) else float('inf')
+
 ################################################## Simulated Annealing #####################################################
-def simulated_annealing(function, x, lower_bounds, upper_bounds,T, cooling_rate, num_temperatures, num_steps, seed_value, max_evals, eps=1e-2):
+def simulated_annealing(function,x, lower_bounds, upper_bounds,T, cooling_rate, num_temperatures, num_steps, seed_value, max_evals, eps=1e-2):
     """
     Simulated annealing optimization algorithm.
 
@@ -46,133 +50,97 @@ def simulated_annealing(function, x, lower_bounds, upper_bounds,T, cooling_rate,
         - N_FUNC_EVALS: Number of function evaluations.
         - message: Termination message.
     """
-    np.random.seed(seed_value)
-    lower_bounds = lower_bounds
-    upper_bounds = upper_bounds
-    N = len(x)
-    N_EPS = 4
-    epsilon = eps
-    N_ACCEPTED = 0
-    N_OUT_OF_BOUNDS = 0
-    N_FUNC_EVALS = 0
-    F_STAR = [np.inf] * N_EPS
-    N_opt_value = 0
-    # Input validation
-    if T <= 0:
-        return {'message': 'Temperature must be positive.'}
-    if len(upper_bounds) != N or len(lower_bounds) != N:
-        return {'message': 'Bounds length must match parameter vector length.'}
-    if any(x[i] < lower_bounds[i] or x[i] > upper_bounds[i] for i in range(N)):
-        return {'message': 'Initial parameters must be within bounds.'}
-
-    # Initial function evaluation
-    F = evaluate_func(function, x)
-    print('Initial loss function value:', F)
-    N_FUNC_EVALS += 1
-    X_opt = x
-    F_opt = F
-    F_STAR[0] = F
-    print(F_STAR)
-    VM = [a_i - b_i for a_i, b_i in zip(upper_bounds, lower_bounds)]    
-    continue_flag = True
-
-    while continue_flag:
-        N_UP = 0
-        N_REJECTED = 0
-        N_DOWN = 0
-        N_OUT_OF_BOUNDS_LOCAL = 0
-        N_NEW = 0
-        N_ACCEPTED_PER_PARAM = [0] * N
+    LB=lower_bounds
+    UB=upper_bounds
+    npr.seed(seed_value)
+    sa_neps=4                                
+    sa_eps=1e-2                     
+    sa_maxeval=max_evals if max_evals is not None else 10**4                  
+    sa_nargs=len(LB)
+    sa_nobds=0
+    sa_nacc=0                               
+    sa_nevals=0                              
+    fstar=[np.inf]*sa_neps
+    f=evaluate_func(function,x)
+    print('initial loss function value:',f)
+    sa_nevals=sa_nevals+1
+    xopt=x
+    fopt=f
+    xtot=x
+    fstar[0]=f
+    sa_opteval=0
+    VM=[a_i - b_i for a_i, b_i in zip(UB, LB)]
+    cont=True
+    while cont:
+        nup=0
+        nrej=0
+        nnew=0
+        ndown=0
+        lnobds=0
+        nacp=[0]*sa_nargs
         for m in range(num_temperatures):
             for j in range(num_steps):
-                for h in range(N):
-                    if N_FUNC_EVALS >= max_evals:
-                        continue_flag = False
-                        return {'x': X_opt, 'fun': F_opt, 'N_FUNC_EVALS': N_FUNC_EVALS,
-                                'message': 'Maximum function evaluations reached.'}
-
-
-                    x_proposal = x.copy()
-                    x_proposal[h] = x[h] + VM[h] * (2 * np.random.rand(1, 1) - 1.0).item(0)
-                    if (x_proposal[h] < lower_bounds[h]) or (x_proposal[h] > upper_bounds[h]):
-                        x_proposal[h] = lower_bounds[h] + (upper_bounds[h] - lower_bounds[h]) * np.random.rand(1, 1).item(0)
-                        N_OUT_OF_BOUNDS_LOCAL += 1
-                        N_OUT_OF_BOUNDS += 1
-
-                    F_proposal = evaluate_func(function, x_proposal)
-                    N_FUNC_EVALS += 1
-
-                    if F_proposal <= F:
-                        x = x_proposal
-                        F = F_proposal
-                        N_ACCEPTED += 1
-                        N_ACCEPTED_PER_PARAM[h] += 1
-                        N_UP += 1
-                        if F_proposal < F_opt:
-                            X_opt = x_proposal
-                            F_opt = F_proposal
-                            N_opt_value=N_FUNC_EVALS
-                            N_NEW += 1
+                for h in range(sa_nargs):
+                    if sa_nevals>=sa_maxeval:
+                        print('too many function evaluations')
+                        cont=False
+                    xp=x.copy()
+                    
+                    xp[h]=x[h]+VM[h]*(npr.uniform(-1,1))
+                    if (xp[h]<LB[h]) or (xp[h]>UB[h]):
+                        xp[h]=LB[h]+(UB[h]-LB[h])*npr.rand()
+                        lnobds=lnobds+1
+                        sa_nobds=sa_nobds+1
+                    fp=evaluate_func(function,xp)
+                    sa_nevals=sa_nevals+1
+                    if fp<=f:
+                        x=xp
+                        f=fp
+                        sa_nacc=sa_nacc+1
+                        nacp[h]=nacp[h]+1
+                        nup=nup+1
+                        if fp<fopt:
+                            xopt=xp
+                            fopt=fp
+                            sa_opteval=sa_nevals
+                            nnew=nnew+1
                     else:
-                        p = np.exp((F-F_proposal)/T)
-                        pp = np.random.rand(1, 1).item(0)
-                        if pp < p:
-                            x = x_proposal
-                            F = F_proposal
-                            N_ACCEPTED += 1
-                            N_ACCEPTED_PER_PARAM[h] += 1
-                            N_DOWN += 1
+                        p=np.exp((f-fp)/T)
+                        pp=npr.rand()
+                        if pp<p:
+                            x=xp
+                            f=fp
+                            sa_nacc=sa_nacc+1
+                            nacp[h]=nacp[h]+1
+                            ndown=ndown+1
                         else:
-                            N_REJECTED += 1
-
-            # Adjust step sizes
-            c = [2] * N
-            for i in range(N):
-                ratio = N_ACCEPTED_PER_PARAM[i] / num_steps
-                if ratio > 0.6:
-                    VM[i] *= (1 + c[i]*(ratio-0.6)/0.4)
-                elif ratio < 0.4:
-                    VM[i] /= (1 + c[i] * (0.4 - ratio) / 0.4)
-                if VM[i] > (upper_bounds[i] - lower_bounds[i]):
-                    VM[i] = upper_bounds[i] - lower_bounds[i]
-
-            # Print iteration results
-            print('*****************************Results***********************************', end='\n * ')
-            print(f"Total number of steps is:{Fore.GREEN}{N_UP + N_DOWN + N_REJECTED}{Style.RESET_ALL}", end='\n * ')
-            print(f"Current number of evaluations is:{Fore.GREEN}{N_FUNC_EVALS}{Style.RESET_ALL}", end='\n *')
-            print(f"Current temperature is: {Fore.GREEN}{T}{Style.RESET_ALL}", end='\n *')
-            print(f"Number of downward steps is :{Fore.GREEN}{N_DOWN}{Style.RESET_ALL}", end='\n *')
-            print(f"Number of upward accepted steps is :{Fore.GREEN}{N_UP}{Style.RESET_ALL}", end='\n *')
-            print(f"Number of downward rejected steps is:{Fore.GREEN}{N_REJECTED}{Style.RESET_ALL}", end='\n *')
-            print(f"Number of times X exceeds the interval is :{Fore.GREEN}{N_OUT_OF_BOUNDS_LOCAL}{Style.RESET_ALL}", end='\n*')
-            print(f"New maximum temperature is :{Fore.GREEN}{N_NEW}{Style.RESET_ALL} ", end='\n*')
-            print(f"The current optimal parameter vector is :{Fore.RED}{X_opt}{Style.RESET_ALL}", end='\n*')
-            print(f"The value of the current optimal point is:{Fore.RED}{F_opt}{Style.RESET_ALL}")
-            print('**************************************************************************')
-            for i in range(N):
-              N_ACCEPTED_PER_PARAM[i]=0
-        F_STAR[0] = F
-        stop = (F_STAR[0] - F_opt) <= epsilon 
-        if np.any([np.abs(el-F)>eps for el in F_STAR]):
-          stop=False
-
+                            nrej=nrej+1
+            c=[2]*sa_nargs
+            for i in range(sa_nargs):
+                ratio=nacp[i]/num_steps
+                if ratio>0.6:
+                    VM[i]=VM[i] * (1+c[i]*(ratio-0.6)/0.4)
+                elif ratio <0.4:
+                    VM[i]=VM[i]/(1+c[i]*((0.4-ratio)/0.4))
+                if VM[i]>(UB[i]-LB[i]):
+                    VM[i]=UB[i]-LB[i]
+            print('xop',xopt)
+            print('fop',fopt)
+            for i in range(sa_nargs):
+                nacp[i] = 0
+        fstar[0]=f
+        stop= ((fstar[0]-fopt) <= sa_eps)
+        if np.any([np.abs(el-f)>sa_eps for el in fstar]):         
+            stop=False
         if stop:
-            continue_flag = False
-            print('*****************************Final Results***********************************', end='\n * ')
-            print(f"Total number of steps is:{Fore.BLUE}{N_UP + N_DOWN + N_REJECTED}{Style.RESET_ALL} ", end='\n * ')
-            print(f"Number of evaluations is:{Fore.BLUE}{N_FUNC_EVALS}{Style.RESET_ALL} ", end='\n * ')
-            print(f"The optimal parameter vector is :{Fore.RED}{X_opt}{Style.RESET_ALL}", end='\n*')
-            print(f"The value of the optimal point is:{Fore.RED}{F_opt}{Style.RESET_ALL}", end='\n*')
-            print(f"Temperature is: {Fore.BLUE}{T}{Style.RESET_ALL}")
-            print('**********************************************************************************')
+            cont=False
 
-        T =T*cooling_rate
-        F_STAR[1:N_EPS] = F_STAR[0:N_EPS-1]
-        x = X_opt
-        F = F_opt
-
-    return {'x': x , 'fun': F, 'N_FUNC_EVALS': N_FUNC_EVALS, 'message': 'Simulated Annealing terminated successfully.'}
-
+            print('optimum function value',fopt)
+        T=T*cooling_rate
+        fstar[1:sa_neps]=fstar[0:sa_neps-1]
+        x=xopt
+        f=fopt
+    return {'x': xopt , 'fun': -fopt, 'N_FUNC_EVALS': sa_nevals, 'message': 'Simulated Annealing terminated successfully.'}
 ################################################## Genetic Algorithm #####################################################
 
 def genetic_algorithm(
@@ -283,11 +251,8 @@ def genetic_algorithm(
         return error_result
     
 ####################################################Quasi_newton############################################################################
-from econometron.utils.solver import Root
 
-r=Root()
-
-def minimize_qn(self, x0, func, maxit=500, gtol=None, ptol=1e-7, verbose=False):
+def minimize_qn(x0, func, maxit=500, gtol=None, ptol=1e-7, verbose=False):
         """Minimize scalar function using BFGS Quasi-Newton method.
         
         Args:
@@ -302,6 +267,7 @@ def minimize_qn(self, x0, func, maxit=500, gtol=None, ptol=1e-7, verbose=False):
             x: Solution
             crit: Convergence criteria array
         """
+        r=Root()
         if gtol is None:
             gtol = np.finfo(float).eps ** (1/3)
         
@@ -362,42 +328,6 @@ def minimize_qn(self, x0, func, maxit=500, gtol=None, ptol=1e-7, verbose=False):
 ################################################### Bayesian Optimization #####################################################
 
 #################################################### Random Walk Metropolis ###################################################
-
-
-def compute_proposal_sigma(n_params, lb, ub, base_std=0.1):
-    """
-    Compute proposal standard deviations based on parameter bounds.
-
-    Parameters:
-    -----------
-    n_params : int
-        Number of parameters.
-    lb : ndarray
-        Lower bounds for parameters.
-    ub : ndarray
-        Upper bounds for parameters.
-    base_std : float or ndarray, optional
-        Base standard deviation (scalar or array of length n_params, default: 0.1).
-
-    Returns:
-    --------
-    ndarray
-        Proposal standard deviations (shape: n_params).
-    """
-    lb = np.array(lb, dtype=float)
-    ub = np.array(ub, dtype=float)
-    if len(lb) != n_params or len(ub) != n_params:
-        raise ValueError("lb and ub must have length n_params")
-    ranges = ub - lb
-    ranges = np.where(ranges > 0, ranges, 1.0)  # Avoid zero ranges
-    if np.isscalar(base_std):
-        sigma = base_std * ranges / 10  # Scale to 10% of range
-    else:
-        base_std = np.array(base_std, dtype=float)
-        if len(base_std) != n_params:
-            raise ValueError("base_std must have length n_params")
-        sigma = base_std * ranges / 10
-    return sigma
 
 # def rwm(objecti_func, prior, x0, lb, ub, n_iter=10000, burn_in=1000, thin=1, sigma=0.1, seed=42, verbose=True):
 #     """

@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 if __name__ == "__main__":
     setup(
         name="econometron",
-        version="0.1.0",
+        version="0.0.3",
         author="Mohamed Amine Ouerfelli ",
         author_email="mohamedamine.ouerfelli@outlook.com",
         description="A Python package for solving ,simulating and estimating DSGE and VAR models.",

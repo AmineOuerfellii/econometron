@@ -3,7 +3,7 @@ from scipy.linalg import inv, solve_discrete_lyapunov, eigvals
 import scipy.linalg as sp
 import warnings
 
-__all__ = ['Kalman', 'kalman_objective', 'kalman_smooth']
+__all__ = ['Kalman','kalman_objective', 'kalman_smooth']
 
 ########################
 class Kalman:
@@ -128,39 +128,44 @@ class Kalman:
         P_tt1 = np.zeros((self.n, self.n, T))
         residuals = np.zeros((self.m, T))
         log_lik = 0
-
+       
         # Initialize
         x_t = self.X_0
         P_t = self.P_0
         # Core Kalman filter loop
         for t in range(T):
+            # print('x',x_t)
+            # print('p',P_t)
             Ztilde = y[:, [t]] - self.D @ x_t
+            #print(Ztilde)
             # Update
             Omega = self.D @ P_t@ self.D.T + self.R
+            #print('t',Omega)
             # Check for NaNs/Infs in Omiga
             if np.any(np.isnan(Omega)) or np.any(np.isinf(Omega)):
                 warnings.warn(f"NaN/Inf detected in innovation covariance Omega at time step {t}.", stacklevel=2)
                 # Assign a large penalty and break or skip
-                log_lik = - 8e30
+                log_lik = -9e+200
                 break # Exit the loop
             try:
               Omegainv = np.linalg.inv(Omega)
             except np.linalg.LinAlgError:
                 warnings.warn(f"Could not invert innovation covariance Omega at time step {t}.", stacklevel=2)
-                log_lik= - 8e30
+                log_lik= -9e+200
                 break
-            Kt = P_t @ self.D.T @ Omegainv
+            #print('omegainv',Omegainv)
+            Kt = P_t @ self.D.conj().T @ Omegainv
             x_t=self.A @ x_t + self.A @ Kt @ Ztilde
-            P_t= self.A@ ( P_t - P_t @ self.D.T @ Omegainv @ self.D @ P_t) @ self.A.T + self.Q
+            P_t= self.A@ ( P_t - P_t @ self.D.conj().T @ Omegainv @ self.D @ P_t) @ self.A.conj().T + self.Q
             P_tt[:, :, t] = P_t
             residuals[:, t] = Ztilde.T @ inv(sp.sqrtm(Omega))
             # Log-likelihood contribution
-            log_lik = log_lik -0.5 * (np.log(2*np.pi)+np.log(np.linalg.det(Omega))) -0.5*Ztilde.conj().T@Omegainv@Ztilde
+            log_lik -= 0.5 * (np.log(np.linalg.det(Omega)) + Ztilde.conj().T @ Omegainv @ Ztilde)
         if isinstance(log_lik, (list, np.ndarray)):
             log_lik = np.mean(log_lik)
         # Handle log-likelihood
         if log_lik.imag != 0:
-            log_lik = - 8e30
+            log_lik = -9e+200
         else:
             log_lik = -log_lik.real
 
@@ -236,14 +241,14 @@ class Kalman:
         Xsm = Xsm[:, :-1]
 
         return {
-            'Xsm': Xsm[:, :T],
+            'Xsm': Xsm[:,1:T],
             'Xtilde': Xtilde,
             'PP1': PP1,
             'residuals': residuals
         }
 ##########################
 ##Kalman Smoother
-def kalman_smooth(y, update_state_space):
+def kalman_smooth(y,full_params,update_state_space,plot=False):
     """
     Objective function for Kalman filter optimization.
 
@@ -267,12 +272,40 @@ def kalman_smooth(y, update_state_space):
     """
     print("Running Kalman smoother...")
     # Update state-space matrices
-    ss_params = update_state_space
+    ss_params = update_state_space(full_params)
     # Run Kalman filter
     try:
         kalman = Kalman(ss_params)
         result = kalman.smooth(y)
         smooth_state = result['Xsm']
+        print(smooth_state.shape)
+        if plot:
+            T = y.shape[1]
+            time = np.arange(T) 
+            import matplotlib.pyplot as plt
+            # Create two subplots
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+            
+            # Plot 1: Observations and smoothed state together
+            ax1.plot(time, y[0, :], label='Observations (y)', color='blue', alpha=0.6)
+            ax1.plot(time, smooth_state[0, :], label='Smoothed State (Xsm)', color='red', linestyle='--')
+            ax1.set_xlabel('Time')
+            ax1.set_ylabel('Value')
+            ax1.set_title('Observations and Smoothed State')
+            ax1.legend()
+            ax1.grid(True, alpha=0.3)
+            
+            # Plot 2: Smoothed state alone
+            ax2.plot(time, smooth_state[0, :], label='Smoothed State (Xsm)', color='red')
+            ax2.set_xlabel('Time')
+            ax2.set_ylabel('Smoothed State')
+            ax2.set_title('Smoothed State Alone')
+            ax2.legend()
+            ax2.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.show()
+
         return smooth_state
     except Exception as e:
         print("Error in kalman_smooth:")
@@ -305,10 +338,10 @@ def kalman_objective(params, fixed_params, param_names, y, update_state_space):
     full_params = fixed_params.copy()
     for name, value in zip(param_names, params):
         full_params[name] = value
-
     # run Kalman filter
     try:
         ss_params = update_state_space(full_params)
+        #print(ss_params)
         kalman = Kalman(ss_params)
         result = kalman.filter(y)
         log_lik = result['log_lik']

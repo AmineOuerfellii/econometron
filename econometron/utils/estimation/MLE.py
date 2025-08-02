@@ -3,7 +3,7 @@ from econometron.filters import Kalman
 from econometron.utils.optimizers import genetic_algorithm, simulated_annealing
 from econometron.utils.estimation import create_results_table
 import numpy as np
-
+import pandas as pd
 
 ####################################### Genetic Algorithm #######################################
 # Genetic Algorithm for Maximum Likelihood Estimation
@@ -31,6 +31,14 @@ def genetic_algorithm_kalman(
     dict
         Dictionary with optimized parameters, objective value, nfev, and message
     """
+    if isinstance(y, np.ndarray):
+        if y.shape[0] > y.shape[1]:
+            y = y.T
+    elif isinstance(y, pd.DataFrame):
+        if y.shape[0] > y.shape[1]:
+            y = y.T.values
+        else:
+            y=y.values
     try:
         obj_func = lambda params: kalman_objective(params, fixed_params, param_names, y, update_state_space)
         result = genetic_algorithm(obj_func, x0, lb, ub, pop_size, n_gen, crossover_rate, 
@@ -69,6 +77,15 @@ def simulated_annealing_kalman(
     max_evals=1000000,
     eps=0.001
 ):
+    if isinstance(y, np.ndarray):
+        if y.shape[0] > y.shape[1]:
+            y = y.T
+    elif isinstance(y, pd.DataFrame):
+        if y.shape[0] > y.shape[1]:
+            y = y.T.values
+        else:
+            y=y.values
+    print(f"Starting Simulated Annealing with params: T0: {T0}, rt: {rt}, nt: {nt}, ns: {ns}, seed: {seed}")
     obj_func = lambda params:kalman_objective(params, fixed_params, param_names, y, update_state_space)
     result = simulated_annealing(obj_func, x0, lb, ub, T0, rt, nt, ns, seed,max_evals,eps)
     table = create_results_table(result, param_names, -result['fun'] if result['fun'] is not None else np.nan, obj_func, 'Simulated Annealing')

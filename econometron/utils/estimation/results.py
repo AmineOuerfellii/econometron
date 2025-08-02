@@ -5,8 +5,8 @@ import contextlib
 import io
 import numpy as np
 import pandas as pd
-import matplotlib as plt
-
+import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 def compute_stats(params, log_lik, func, eps=1e-4):
     """
     Compute standard errors and p-values using numerical Hessian.
@@ -76,10 +76,9 @@ def create_results_table(
     prior_func=None,
     true_posterior_params=None,
     samples=None,
-    output_dir='plots'
 ):
     """
-    Create a results table for optimization or sampling methods, including histogram data.
+    Create a results table for optimization or sampling methods, including posterior plots for Bayesian methods.
 
     Parameters:
     -----------
@@ -99,18 +98,13 @@ def create_results_table(
         Parameters for true posterior (e.g., {'mean': [...], 'std': [...]} for normal).
     samples : ndarray, optional
         Posterior samples for sampling methods (if not in result['samples']).
-    output_dir : str, optional
-        Directory to save plot files (default: 'plots').
 
     Returns:
     --------
     pd.DataFrame
         Table with Parameter, Estimate, Std Error/Credible Intervals, P-Value, Log-Prior,
-        Log-Likelihood, Plot File, Histogram (bins, counts), Method.
+        Log-Likelihood, Method, and embedded posterior plots for Bayesian methods.
     """
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
     # Initialize table components
     n_params = len(param_names)
     estimates = [np.nan] * n_params
@@ -120,10 +114,10 @@ def create_results_table(
     credible_upper = [np.nan] * n_params
     log_prior = np.nan
     log_like = log_lik
-    plot_files = [np.nan] * n_params
-    histograms = [np.nan] * n_params
+    plot_data = [None] * n_params
+
     silent_stdout = contextlib.redirect_stdout(io.StringIO())
-    with silent_stdout: 
+    with silent_stdout:
         if method == 'RWM' and (result.get('samples') is not None or samples is not None):
             # Sampling methods (RWM)
             samples = result.get('samples') if samples is None else samples
@@ -136,20 +130,25 @@ def create_results_table(
 
             if prior_func is not None:
                 log_prior = prior_func(mean_estimates)
-        
-            # Generate, display, and store histograms
+
+            # Generate posterior plots
             for i, param in enumerate(param_names):
-                plt.figure(figsize=(6, 4))
-                counts, bins, _ = plt.hist(samples[:, i], bins=30, density=True, alpha=0.6, label=f'{param} samples')
-                histograms[i] = (bins, counts) 
+                fig = plt.figure(figsize=(8, 6))
+                gs = GridSpec(2, 1, height_ratios=[3, 1])
+                
+                # Posterior plot
+                ax1 = fig.add_subplot(gs[0])
+                counts, bins, _ = ax1.hist(samples[:, i], bins=30, density=True, alpha=0.6, color='skyblue', label='Posterior')
+                ax1.set_ylabel('Density', fontsize=12)
+                ax1.set_title(f'Posterior Analysis for {param}', fontsize=14, pad=15)
+                
                 if true_posterior_params is not None:
                     true_mean = true_posterior_params.get('mean', [0.0] * n_params)[i]
                     true_std = true_posterior_params.get('std', [1.0] * n_params)[i]
                     x = np.linspace(true_mean - 4 * true_std, true_mean + 4 * true_std, 100)
-                    plt.plot(x, norm.pdf(x, true_mean, true_std), 'r-', label='True posterior')
+                    ax1.plot(x, norm.pdf(x, true_mean, true_std), 'r-', lw=2, label='True Posterior')
 
                 if prior_func is not None:
-                    # Evaluate prior_func over a grid
                     x_min = np.min(samples[:, i]) * 0.9
                     x_max = np.max(samples[:, i]) * 1.1
                     x = np.linspace(x_min, x_max, 100)
@@ -159,20 +158,24 @@ def create_results_table(
                         params[i] = x_val
                         log_p = prior_func(params)
                         prior_density[j] = np.exp(log_p) if np.isfinite(log_p) else 0
-                    # Normalize density
                     if np.sum(prior_density) > 0:
                         prior_density /= np.trapz(prior_density, x)
-                    plt.plot(x, prior_density, 'b--', label='Prior')
+                    ax1.plot(x, prior_density, 'b--', lw=2, label='Prior')
 
-                plt.legend()
-                plt.title(f'{param} Posterior vs Prior')
-                plt.xlabel(param)
-                plt.ylabel('Density')
-                plot_file = os.path.join(output_dir, f'{param}_posterior_plot.png')
-                plt.savefig(plot_file)
-                plt.show()
-                plt.close()
-                plot_files[i] = plot_file
+                ax1.legend(fontsize=10)
+                ax1.grid(True, alpha=0.3)
+                
+                # Box plot for credible intervals
+                ax2 = fig.add_subplot(gs[1])
+                ax2.boxplot(samples[:, i], vert=False, widths=0.4, patch_artist=True,
+                           boxprops=dict(facecolor='lightgreen', alpha=0.5))
+                ax2.set_yticks([])
+                ax2.set_xlabel(param, fontsize=12)
+                
+                plt.tight_layout()
+                # Convert plot to a format suitable for DataFrame (e.g., base64 or matplotlib figure object)
+                plot_data[i] = fig
+                plt.close(fig)
 
         elif result.get('x') is not None:
             # Optimization methods
@@ -194,8 +197,7 @@ def create_results_table(
         '95% Credible Interval Upper': credible_upper if method == 'RWM' else [np.nan] * n_params,
         'Log-Prior': [log_prior] * n_params,
         'Log-Likelihood': [log_like] * n_params,
-        'Plot File': plot_files if method == 'RWM' else [np.nan] * n_params,
-        'Histogram': histograms if method == 'RWM' else [np.nan] * n_params,
+        'Posterior Plot': plot_data if method == 'RWM' else [None] * n_params,
         'Method': [method] * n_params
     })
 

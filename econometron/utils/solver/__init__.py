@@ -176,9 +176,10 @@ class Root:
         
         return s2, 0
     
-r=Root()
+############################################################################
 
-def nr_solve(self, x0, func, maxit=5000, stopc=1e-8, use_global=True, use_qr=False, verbose=False):
+
+def nr_solve(x0, func, maxit=5000, stopc=1e-8, use_global=True, use_qr=False, verbose=False):
         """Solve nonlinear system using modified Newton-Raphson method."""
         x = x0.copy()
         crit = np.ones(5)
@@ -188,7 +189,7 @@ def nr_solve(self, x0, func, maxit=5000, stopc=1e-8, use_global=True, use_qr=Fal
         lam_max = 1e6
         lam_mult = 10.0
         min_step = 1e-6  # Increased from 1e-8
-        
+        r = Root()
         while itn < maxit and crit[1] >= stopc:
             if verbose:
                 print(f"[Newton] Iteration {itn}, coeffs[:5]: {x[:5]}")

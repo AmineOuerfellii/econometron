@@ -1,12 +1,6 @@
 import numpy as np
 
-def make_state_space_updater(
-    base_params: dict,
-    solver: callable,
-    build_R: callable,
-    build_C: callable,
-    derived_fn: callable = None,
-):
+def make_state_space_updater(base_params: dict,solver: callable,build_R: callable,build_C: callable,derived_fn: callable = None):
     """
     Creates a generalized state-space updater function.
 
@@ -27,23 +21,20 @@ def make_state_space_updater(
     --------
     A function that takes a dictionary of parameter updates and returns the state-space matrices.
     """
-
     def update_state_space(params):
         full_params = base_params.copy()
         full_params.update(params)
-        
         # Apply derived parameter logic if provided
         if derived_fn is not None:
             derived_fn(full_params)
-        
+        #print(full_params)
         # Solve the model
+        #print(full_params)
         F, P = solver(full_params)
+        #print(F,P)
         R = build_R(full_params)
         RR = R @ R.T
-        
         C = build_C(full_params)
         QQ = C @ C.T
-        
         return {'A': P, 'D': F, 'Q': QQ, 'R': RR}
-
     return update_state_space
