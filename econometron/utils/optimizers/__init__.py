@@ -464,7 +464,7 @@ def rwm(objecti_func, prior, x0, lb, ub, n_iter=10000, burn_in=1000, thin=1, sig
         n_accept = 0
         x_current = x.copy()
         log_post_current = evaluate_func(objecti_func, x_current) + prior(x_current)
-
+        
         if np.isinf(log_post_current) or np.isnan(log_post_current):
             return {
                 'samples': None, 'log_posterior': None, 'acceptance_rate': 0,
@@ -474,7 +474,7 @@ def rwm(objecti_func, prior, x0, lb, ub, n_iter=10000, burn_in=1000, thin=1, sig
         # Main loop with explicit sample counter
         sample_idx = 0
         for i in range(n_iter):
-            x_proposed = x_current + np.random.normal(0, sigma, N)
+            x_proposed = x_current + npr.normal(0, sigma, N)
 
             if np.any(x_proposed < lb) or np.any(x_proposed > ub):
                 continue  # Reject if outside bounds
@@ -483,17 +483,16 @@ def rwm(objecti_func, prior, x0, lb, ub, n_iter=10000, burn_in=1000, thin=1, sig
             
             if log_prior_proposed > -np.inf:
                 log_like_proposed = evaluate_func(objecti_func, x_proposed)
-
+                print(log_like_proposed)
                 if log_like_proposed == -np.inf:
                       R = 0
                 else:
                   log_post_proposed = log_like_proposed + log_prior_proposed
-              
                   R = np.exp(min(0, log_post_proposed - log_post_current))
             else:
               R=0
             # Accept/reject step
-            if np.random.rand(1, 1).item(0) <= R:
+            if npr.rand() <= R:
                 x_current = x_proposed
                 log_post_current = log_post_proposed
                 n_accept += 1

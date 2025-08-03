@@ -194,22 +194,30 @@ class N_beats_Block(nn.Module):
         self.backcast = backcast
         #####
         # we will set 4 layers for teh Fully connected stack
-        #  self.FC_stack=nn.Sequential(
-        #      nn.Linear(in_features=input_size,out_features=Hidden_size),
-        #      nn.ReLU(),#h(l1)
-        #      nn.Linear(in_features=Hidden_size,out_features=Hidden_size),
-        #      nn.ReLU(),#h(l2)
-        #      nn.Linear(in_features=Hidden_size,out_features=Hidden_size),
-        #      nn.ReLU(),#h(l3)
-        #      nn.Linear(in_features=Hidden_size,out_features=Hidden_size),
-        #      nn.ReLU() #h(l4)
-        #  )
-        layers = []
-        for i in range(n_layers):
-            layers.append(nn.Linear(in_features=input_size, out_features=Hidden_size))
-            layers.append(nn.ReLU())
-            input_size = Hidden_size
-        self.FC_stack = nn.Sequential(*layers)
+        # # # #  self.FC_stack=nn.Sequential(
+        # # # #      nn.Linear(in_features=input_size,out_features=Hidden_size),
+        # # # #      nn.ReLU(),#h(l1)
+        # # # #      nn.Linear(in_features=Hidden_size,out_features=Hidden_size),
+        self.FC_stack = nn.Sequential(
+            nn.Linear(in_features=input_size, out_features=Hidden_size),
+            nn.ReLU(),
+            *[
+            layer
+            for _ in range(n_layers - 1)
+            for layer in (nn.Linear(in_features=Hidden_size, out_features=Hidden_size), nn.ReLU())
+            ]
+        )
+        # # # #      nn.Linear(in_features=Hidden_size,out_features=Hidden_size),
+        # # # #      nn.ReLU(),#h(l3)
+        # # # #      nn.Linear(in_features=Hidden_size,out_features=Hidden_size),
+        # # # #      nn.ReLU() #h(l4)
+        # # # #  )
+        # layers = []
+        # for i in range(n_layers):
+        #     layers.append(nn.Linear(in_features=input_size, out_features=Hidden_size))
+        #     layers.append(nn.ReLU())
+        #     input_size = Hidden_size
+        # self.FC_stack = nn.Sequential(*layers)
         # see page 3 in N-BEATS paper by Boris N. Oreshkin
         # Now we prepare for the FC layer within each basis type choice
         # please contact me @mohamedamine.ouerfelli@outlook.com specially
@@ -247,6 +255,7 @@ class N_beats_Block(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, x):
+        print("Input shape:", x.shape)
         h_4 = self.FC_stack(x)
         theta_b = self.theta_b(h_4)
         theta_f = self.theta_f(h_4)
@@ -350,8 +359,8 @@ class N_beats(nn.Module):
         total_forecast = torch.zeros(x.shape[0], self.forecast_length, device=x.device)
         for stack in self.stacks:
             stack_forecast, residual = stack(residual)
-            # print("stack_forecast shape:", stack_forecast.shape)
-            # print("residual shape:", residual.shape)
+            print("stack_forecast shape:", stack_forecast.shape)
+            print("residual shape:", residual.shape)
             total_forecast += stack_forecast           
         return total_forecast
     def get_model_info(self):
@@ -524,6 +533,13 @@ class NeuralForecast:
         val_data = torch.FloatTensor(np.concatenate([X_val, y_val], axis=1))
         test_data = torch.FloatTensor(np.concatenate([X_test, y_test], axis=1))
         
+        # Squeeze last dimension if data is 3D with last dim == 1
+        if train_data.ndim == 3 and train_data.shape[-1] == 1:
+            train_data = train_data.squeeze(-1)
+        if val_data.ndim == 3 and val_data.shape[-1] == 1:
+            val_data = val_data.squeeze(-1)
+        if test_data.ndim == 3 and test_data.shape[-1] == 1:
+            test_data = test_data.squeeze(-1)
         print(f"Data processed - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
         
         return train_data, val_data, test_data
@@ -679,44 +695,40 @@ class NeuralForecast:
         """Train for one epoch"""
         self.model.train()
         total_loss = 0
-        
         for batch_X, batch_y in train_loader:
             batch_X, batch_y = batch_X.to(self.device), batch_y.to(self.device)
-            
             if normalize and self.scaler:
                 batch_X = torch.tensor(self.scaler.transform(batch_X.cpu().numpy()), 
                                      dtype=torch.float32, device=self.device)
-            
             optimizer.zero_grad()
             outputs = self.model(batch_X)
+            # If outputs is a tuple (forecast, backcast), use only forecast for loss
+            if isinstance(outputs, tuple):
+                outputs = outputs[0]
             loss = loss_fn(batch_y, outputs)
             loss.backward()
-            
             if gradient_clip:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), gradient_clip)
-            
             optimizer.step()
             total_loss += loss.item()
-        
         return total_loss / len(train_loader)
     
     def _validate_epoch(self, val_loader: DataLoader, loss_fn, normalize: bool = False) -> float:
         """Validate for one epoch"""
         self.model.eval()
         total_loss = 0
-        
         with torch.no_grad():
             for batch_X, batch_y in val_loader:
                 batch_X, batch_y = batch_X.to(self.device), batch_y.to(self.device)
-                
                 if normalize and self.scaler:
                     batch_X = torch.tensor(self.scaler.transform(batch_X.cpu().numpy()), 
                                          dtype=torch.float32, device=self.device)
-                
                 outputs = self.model(batch_X)
+                # If outputs is a tuple (forecast, backcast), use only forecast for loss
+                if isinstance(outputs, tuple):
+                    outputs = outputs[0]
                 loss = loss_fn(batch_y, outputs)
                 total_loss += loss.item()
-        
         return total_loss / len(val_loader)
     
     def plot_training_history(self, figsize: Tuple[int, int] = (15, 5)):
