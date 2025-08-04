@@ -145,13 +145,13 @@ class Kalman:
             if np.any(np.isnan(Omega)) or np.any(np.isinf(Omega)):
                 warnings.warn(f"NaN/Inf detected in innovation covariance Omega at time step {t}.", stacklevel=2)
                 # Assign a large penalty and break or skip
-                log_lik = -9e+200
+                log_lik = -9e+20
                 break # Exit the loop
             try:
               Omegainv = np.linalg.inv(Omega)
             except np.linalg.LinAlgError:
                 warnings.warn(f"Could not invert innovation covariance Omega at time step {t}.", stacklevel=2)
-                log_lik= -9e+200
+                log_lik= -9e+20
                 break
             #print('omegainv',Omegainv)
             Kt = P_t @ self.D.conj().T @ Omegainv
@@ -165,7 +165,7 @@ class Kalman:
             log_lik = np.mean(log_lik)
         # Handle log-likelihood
         if log_lik.imag != 0:
-            log_lik = -9e+200
+            log_lik = -9e+20
         else:
             log_lik = -log_lik.real
 
@@ -241,7 +241,7 @@ class Kalman:
         Xsm = Xsm[:, :-1]
 
         return {
-            'Xsm': Xsm[:,1:T],
+            'Xsm': Xsm[:,:T],
             'Xtilde': Xtilde,
             'PP1': PP1,
             'residuals': residuals
@@ -350,4 +350,4 @@ def kalman_objective(params, fixed_params, param_names, y, update_state_space):
         print("Error in kalman_objective:")
         print(f"Params: {params}")
         print(f"Exception: {e}")
-        return 8e30
+        return 9e+20

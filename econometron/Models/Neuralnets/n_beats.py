@@ -796,7 +796,9 @@ class NeuralForecast:
         
         if len(input_sequence.shape) == 1:
             input_sequence = input_sequence.unsqueeze(0)
-        
+        # if input_sequence.ndim() == 2 and input_sequence.shape[1] == 1:
+        #     input_sequence = input_sequence.squeeze(-1)
+            
         input_sequence = input_sequence.to(self.device)
         
         # Normalize if needed

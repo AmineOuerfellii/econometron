@@ -46,18 +46,13 @@ class ProjectionSolver:
             Convergence criteria
         """
         if initial_guess is None:
-            initial_guess = np.zeros(self.basis_size)
-        
+            initial_guess = np.zeros(self.basis_size)      
         nodes = self.cheb_basis.funnode()
         grid = self.cheb_basis.gridmake(nodes)
-        
         def residual(coeffs):
             f_values = self.cheb_basis.funeval(coeffs, grid)
             return residual_func(grid, f_values, coeffs)
-        
-        coeffs, crit = nr_solve(
-            initial_guess, residual, maxit=maxit, stopc=stopc, verbose=verbose
-        )
+        coeffs, crit = nr_solve(initial_guess, residual, maxit=maxit, stopc=stopc, verbose=verbose)
         return coeffs, crit
     
     def solve_galerkin(self, residual_func, initial_guess=None, maxit=5000, stopc=1e-8, verbose=False):

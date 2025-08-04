@@ -42,6 +42,7 @@ def compute_proposal_sigma(n_params, lb, ub, base_std=0.1):
         sigma = base_std * ranges / 10
     return sigma
 #######################################Make Prior func #############################################################
+
 def make_prior_function(
     param_names: List[str],
     priors: Dict[str, Tuple[Callable, Dict]],
@@ -50,7 +51,7 @@ def make_prior_function(
 ):
     """
     Create a generalized log-prior function for a model.
-
+    
     Parameters:
     -----------
     param_names : list of str
@@ -62,48 +63,50 @@ def make_prior_function(
         Mapping from parameter name to (lower_bound, upper_bound)
     verbose : bool
         Whether to print debug output.
-
+    
     Returns:
     --------
     Function that takes a parameter vector and returns the log-prior.
     """
     
     def prior(params: List[float]) -> float:
-      if len(params) != len(param_names):
-          if verbose:
-              print("Error: Parameter vector length mismatch.")
-          return -np.inf
-
-      # First pass: check bounds
-      for name, value in zip(param_names, params):
-          lb, ub = bounds[name]
-          if not (lb < value < ub):
-              if verbose:
-                  print(f"[Bound Error] {name} = {value:.4f} not in ({lb}, {ub})")
-              return -8e+30
-
-      # Second pass: compute log-prior
-      log_priors = []
-      for name, value in zip(param_names, params):
-          dist, kwargs = priors[name]
-          try:
-              logp = dist.logpdf(value, **kwargs)
-              if not np.isfinite(logp):
-                  raise ValueError("Non-finite logpdf value")
-              log_priors.append(logp)
-              if verbose:
-                  print(f"[Log Prior] {name}: logpdf({value:.4f}) = {logp:.3f}")
-          except Exception as e:
-              if verbose:
-                  print(f"[PDF Error] {name}: {e}")
-              return -1e4
-
-      total_log_prior = sum(log_priors)
-      if verbose:
-          print(f"[Total Log Prior] = {total_log_prior:.3f} | Params = {params}")
-
-      return total_log_prior if np.isfinite(total_log_prior) else -np.inf
-
+        if len(params) != len(param_names):
+            if verbose:
+                print("Error: Parameter vector length mismatch.")
+            return -np.inf
+        
+        # Check bounds and compute log-prior in single pass
+        log_priors = []
+        for name, value in zip(param_names, params):
+            lb, ub = bounds[name]
+            # Return -inf if outside bounds
+            if not (lb < value < ub):
+                if verbose:
+                    print(f"[Bound Error] {name} = {value:.4f} not in ({lb}, {ub})")
+                return -np.inf
+            
+            # Compute log-prior for this parameter
+            dist, kwargs = priors[name]
+            try:
+                logp = dist.logpdf(value, **kwargs)
+                if not np.isfinite(logp):
+                    if verbose:
+                        print(f"[PDF Error] {name}: Non-finite logpdf value")
+                    return -np.inf
+                log_priors.append(logp)
+                if verbose:
+                    print(f"[Log Prior] {name}: logpdf({value:.4f}) = {logp:.3f}")
+            except Exception as e:
+                if verbose:
+                    print(f"[PDF Error] {name}: {e}")
+                return -np.inf
+        
+        total_log_prior = sum(log_priors)
+        if verbose:
+            print(f"[Total Log Prior] = {total_log_prior:.3f} | Params = {params}")
+        
+        return total_log_prior if np.isfinite(total_log_prior) else -np.inf
+    
     return prior
 
 ####################################### Random Walk Metropolis (RWM) #######################################
@@ -193,30 +196,19 @@ def rwm_kalman(
     else:
         prior=prior
     # Define objective function
-    obj_func = lambda params: -kalman_objective(params, fixed_params, param_names, y, update_state_space)
+    obj_func = lambda params: - kalman_objective(params, fixed_params, param_names, y, update_state_space)
     
     # Run RWM
     result = rwm(obj_func, prior, x0, lb, ub, n_iter, burn_in, thin, sigma, seed, verbose)
+    print(result)
     # Validate result
-    #if not isinstance(result, dict) or 'samples' not in result or 'log_posterior' not in result:
-        #raise ValueError(f"Invalid result from rwm: {result}")
-    
+    if not isinstance(result, dict) or 'samples' not in result or 'log_posterior' not in result:
+        raise ValueError(f"Invalid result from rwm: {result}")
     # Create table
-    table = create_results_table(result,param_names,log_lik=np.mean(result['log_posterior']),obj_func=obj_func,method='RWM',prior_func=prior)
-    print('table',table)
+    table = create_results_table(result, param_names, log_lik=np.mean(result['log_posterior']), obj_func=obj_func, method='RWM', prior_func=prior)
+    print('table', table)
     if verbose:
         print(f"Final RWM result: {result}")
         print(f"Results table: {table}")
-    
+
     return {'result': result, 'table': table}
-    
-    # except Exception as e:
-    #     error_result = {
-    #         'samples': None,
-    #         'log_posterior': None,
-    #         'acceptance_rate': None,
-    #         'message': f'RWM failed: {str(e)}'
-    #     }
-    #     error_table = {'Method': 'RWM', 'Message': f'Table creation failed: {str(e)}'}
-    #     print(f"Error in rwm_kalman: {e}, returning: {error_result}, table: {error_table}")
-    #     return {'result': error_result, 'table': error_table}
