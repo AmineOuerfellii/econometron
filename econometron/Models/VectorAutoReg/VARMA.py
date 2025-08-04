@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class VARMA_(VAR):
+class VARMA(VAR):
   def __init__(self,data,max_p=5,max_q=5,columns=None,forecast_h=6,plot=True,check_stationarity=True,bootstrap_n=1000,criterion='AIC',structural_id=False,ci_alpha=0.05,Key=None,Threshold=0.8,orth=False):
     super().__init__(data,max_p,columns,criterion,forecast_h,plot,bootstrap_n,ci_alpha,orth,check_stationarity,Key,Threshold)
     self.max_q=max_q

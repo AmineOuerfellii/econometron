@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class VARIMA(VARMA.VARMA_):
+class VARIMA(VARMA):
     """
     VARIMA model for multivariate time series forecasting with integrated differencing.
 
