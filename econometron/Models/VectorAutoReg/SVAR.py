@@ -1,12 +1,13 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from scipy.linalg import solve, svd
-from .VAR import VAR
-from econometron.utils.estimation.OLS import ols_estimator
+from scipy.linalg import solve
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+from .VAR import VAR
+from econometron.utils.estimation.OLS import ols_estimator
+
 
 class SVAR(VAR):
     def __init__(self, data, max_p=2, columns=None, criterion='AIC', forecast_horizon=10, 
@@ -43,7 +44,7 @@ class SVAR(VAR):
         if method == 'chol':
             # Cholesky decomposition: A is lower triangular, B is identity
             self.B = np.eye(K)
-            self.A = np.linalg.cholesky(Sigma)
+            self.A = np.linalg.cholesky(Sigma+1e-8*np.eye(K))
             self.A_inv_B = self.A
         elif method == 'blanchard-quah':
             # Blanchard-Quah: long-run restrictions
@@ -92,19 +93,16 @@ class SVAR(VAR):
         beta = self.best_model['beta']
         intercept_included = beta.shape[0] == K * p + 1
         A = beta[1:] if intercept_included else beta
-        A = A.reshape(p, K, K).transpose(1, 2, 0)
-        
-        Psi = np.zeros((h, K, K))
+        A = A.reshape(p,K,K).transpose(2,1,0)
+        Psi = np.zeros((h+1, K, K))
         Psi[0] = np.eye(K)
-        for i in range(1, h):
+        for i in range(1,h+1):
             for j in range(min(i, p)):
-                Psi[i] += A[:, :, j] @ Psi[i - j - 1]
-        
+                Psi[i] += A[:, :,j] @ Psi[i-j-1]
         if orth:
-            irf = np.array([Psi[i] @ self.A_inv_B for i in range(h)])
+            irf = np.array([Psi[i] @ self.A_inv_B for i in range(h+1)])
         else:
             irf = Psi
-
         if not bootstrap:
             if plot:
                 fig, axes = plt.subplots(K, K, figsize=(12, 8), sharex=True)
@@ -112,7 +110,7 @@ class SVAR(VAR):
                 for i in range(K):
                     for j in range(K):
                         idx = i * K + j
-                        axes[idx].plot(range(h), irf[:, i, j], 
+                        axes[idx].plot(range(h+1), irf[:, i, j], 
                                      label=f'Shock {self.columns[j]} → {self.columns[i]}')
                         axes[idx].set_title(f'Structural IRF: {self.columns[i]} response to {self.columns[j]} shock')
                         axes[idx].set_xlabel('Horizon')
@@ -132,10 +130,10 @@ class SVAR(VAR):
             boot_idx = np.random.choice(T, size=T, replace=True)
             boot_resids = residuals[boot_idx]
             Y_sim = np.zeros((T + p, K))
-            Y_sim[:p] = data[-p:]
+            Y_sim[:p] = np.flipud(data[-p:])
             intercept = beta[0] if intercept_included else np.zeros(K)
             
-            for t in range(p, T + p):
+            for t in range(p,T + p):
                 Y_t = intercept.copy()
                 for j in range(p):
                     Y_t += A[:, :, j] @ Y_sim[t - j - 1]
@@ -151,10 +149,10 @@ class SVAR(VAR):
                 continue
                 
             boot_A = boot_beta[1:] if boot_beta.shape[0] == K * p + 1 else boot_beta
-            boot_A = boot_A.reshape(p, K, K).transpose(1, 2, 0)
-            boot_Psi = np.zeros((h, K, K))
+            boot_A = boot_A.reshape(p, K, K).transpose(2, 1, 0)
+            boot_Psi = np.zeros((h+1, K, K))
             boot_Psi[0] = np.eye(K)
-            for i in range(1, h):
+            for i in range(1, h+1):
                 for j in range(min(i, p)):
                     boot_Psi[i] += boot_A[:, :, j] @ boot_Psi[i - j - 1]
             
@@ -169,7 +167,7 @@ class SVAR(VAR):
                         P = Q
                     else:  # AB model
                         P = solve(self.A, self.B, assume_a='gen')
-                    boot_irf = np.array([boot_Psi[i] @ P for i in range(h)])
+                    boot_irf = np.array([boot_Psi[i] @ P for i in range(h+1)])
                 except np.linalg.LinAlgError:
                     logger.warning(f"Bootstrap iteration {b} failed: Non-positive definite covariance")
                     continue
@@ -186,9 +184,9 @@ class SVAR(VAR):
             for i in range(K):
                 for j in range(K):
                     idx = i * K + j
-                    axes[idx].plot(range(h), irf[:, i, j], 
+                    axes[idx].plot(range(h+1), irf[:, i, j], 
                                  label=f'Shock {self.columns[j]} → {self.columns[i]}')
-                    axes[idx].fill_between(range(h), ci_lower[:, i, j], ci_upper[:, i, j], 
+                    axes[idx].fill_between(range(h+1), ci_lower[:, i, j], ci_upper[:, i, j], 
                                          alpha=0.3, color='red', 
                                          label=f'{100 * (1 - self.ci_alpha)}% CI')
                     axes[idx].set_title(f'Structural IRF: {self.columns[i]} response to {self.columns[j]} shock')
@@ -208,10 +206,10 @@ class SVAR(VAR):
         K = len(self.columns)
         irf = self.impulse_res(h=h, orth=True, bootstrap=False, plot=False)
         Sigma = np.cov(self.best_model['residuals'].T)
-        fevd = np.zeros((h, K, K))
-        mse = np.zeros((h, K))
-        
-        for i in range(h):
+        fevd = np.zeros((h+1, K, K))
+        mse = np.zeros((h+1, K))
+
+        for i in range(h+1):
             for j in range(K):
                 for t in range(i + 1):
                     mse[i, j] += np.sum(irf[t, j, :] ** 2 * np.diag(self.B @ self.B.T))
@@ -222,9 +220,9 @@ class SVAR(VAR):
             fig, axes = plt.subplots(K, 1, figsize=(10, 4 * K), sharex=True)
             axes = [axes] if K == 1 else axes
             for j in range(K):
-                bottom = np.zeros(h)
+                bottom = np.zeros(h+1)
                 for k in range(K):
-                    axes[j].bar(range(h), fevd[:, j, k], bottom=bottom, 
+                    axes[j].bar(range(h+1), fevd[:, j, k], bottom=bottom, 
                                label=f'Structural Shock from {self.columns[k]}')
                     bottom += fevd[:, j, k]
                 axes[j].set_title(f'Structural FEVD for {self.columns[j]}')
@@ -263,18 +261,18 @@ class SVAR(VAR):
         beta = self.best_model['beta']
         intercept_included = beta.shape[0] == K * p + 1
         A = beta[1:] if intercept_included else beta
-        A = A.reshape(p, K, K).transpose(1, 2, 0)
+        A = A.reshape(p, K, K).transpose(2, 1, 0)
         
         # Compute structural shocks
         structural_shocks = self.get_structural_shocks()
         
         # Compute IRFs
-        Psi = np.zeros((h, K, K))
+        Psi = np.zeros((h+1, K, K))
         Psi[0] = np.eye(K)
-        for i in range(1, h):
+        for i in range(1, h+1):
             for j in range(min(i, p)):
                 Psi[i] += A[:, :, j] @ Psi[i - j - 1]
-        structural_irf = np.array([Psi[i] @ self.A_inv_B for i in range(h)])
+        structural_irf = np.array([Psi[i] @ self.A_inv_B for i in range(h+1)])
         
         # Initialize decomposition
         decomp = np.zeros((T, K, K + 1))  # +1 for initial conditions
@@ -293,7 +291,7 @@ class SVAR(VAR):
             
             # Shock contributions
             for k in range(K):
-                for s in range(min(t - p + 1, h)):
+                for s in range(min(t - p + 1, h+1)):
                     decomp[t, :, k] += structural_irf[s, :, k] * structural_shocks[t - s - p, k]
         
         # Fill in initial periods with zeros

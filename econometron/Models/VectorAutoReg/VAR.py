@@ -324,7 +324,7 @@ class VAR:
     if p:
       s=p
       self.max_p=p
-    print(s,self.max_p)
+    #print(s,self.max_p)
     for p in range(s,self.max_p+1):
       try:
         X,Y=self.lag_matrix(p)
@@ -348,7 +348,7 @@ class VAR:
             return select_order_table
           crit=locals()[self.criterion.lower()]
           if crit< self.best_criterion_value:
-              print(self.best_criterion_value)  
+              #print(self.best_criterion_value)  
               self.best_criterion_value = crit
               self.best_model = self.all_results[-1]
               self.best_p = p
