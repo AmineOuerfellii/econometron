@@ -4,14 +4,12 @@ from scipy.stats import t, norm
 import numpy as np
 import pandas as pd
 import warnings
-def ols_estimator(X,Y,tol=1e-6):
+def ols_estimator(X,Y,add_intercept=None,tol=1e-6):
       #building The OlS estimator
   #I'll use numpy.linalg.lstsq ot reinviting the wheel
   #Fist check if X and Y aren't empty
   if X.size == 0 or Y.size == 0:
     raise ValueError("X or Y is empty")
-
-  add_intercept=True
   #Fist as usual checking the inputs
   if X.shape[0] != Y.shape[0]:
     raise ValueError("X and Y don't share the same dimension")
@@ -23,27 +21,27 @@ def ols_estimator(X,Y,tol=1e-6):
     K=Y.shape[1]
     ###
     ###check the mean to see if an itrecept needs to be added
-    col_means=np.mean(X,axis=0)
-    demeaned_flags = np.isclose(col_means, 0, atol=tol)
-    if np.all(demeaned_flags):
-      X_full=X
-      add_intercept=False
-    else:
-      add_intercept=True
-      X_full=np.hstack((np.ones((T,1)),X))
+    # col_means=np.mean(X,axis=0)
+    # demeaned_flags = np.isclose(col_means, 0, atol=tol)
+    # if np.all(demeaned_flags):
+    #   X_full=X
+    #   add_intercept=False
+    # else:
+    #   add_intercept=True
+    #   X_full=np.hstack((np.ones((T,1)),X))
     # Ensure Y is a NumPy array for consistent indexing
+    if add_intercept is None:
+          col_means=np.mean(X,axis=0)
+          demeaned_flags=np.isclose(col_means,0,atol=tol)
+          add_intercept=not np.all(demeaned_flags)
+    if add_intercept:
+          X_full=np.hstack((np.ones((T,1)),X))
+    else:
+          X_full=X
     Y_np = Y.to_numpy() if isinstance(Y, pd.DataFrame) else Y
     resid=np.zeros_like(Y_np)
     beta,_,rank,_=np.linalg.lstsq(X_full,Y,rcond=None)
-    #print(beta)
-    if add_intercept:
-      beta_a = beta.copy()
-      for j in range(K):
-        if demeaned_flags[j]:
-          beta_a[0,j] = 0
-    else:
-      beta_a=beta
-    fitted=X_full@beta_a
+    fitted=X_full@beta
     # Use NumPy array indexing for residue calculation
     resid=Y_np-fitted
     #### Diagnostics:
@@ -73,7 +71,7 @@ def ols_estimator(X,Y,tol=1e-6):
       XTX_inv = pinv(X_full.T @ X_full)
     #calculate diagonal of (XTX_inv * ee_var^2)
     se = np.sqrt(np.diag(XTX_inv).reshape(-1, 1) * (ee_var.reshape(1, -1)**2))
-    z_values = np.where(se>0, beta_a / se, np.nan)
+    z_values = np.where(se>0, beta/ se, np.nan)
     if T < 30 and T > rank:
         p_values=2*(1-t.cdf(np.abs(z_values), df=T-rank))
     else:
@@ -93,4 +91,4 @@ def ols_estimator(X,Y,tol=1e-6):
     "R2": R_square,
     "R2_per_var": R_square_per_var,
     "log_likelihood": log_lik}
-    return beta_a,fitted,resid,res
+    return beta,fitted,resid,res

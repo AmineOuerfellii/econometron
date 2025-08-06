@@ -205,3 +205,39 @@ def create_results_table(
     df = df.dropna(how='all', axis=1)
 
     return df
+
+####################################
+
+def update_parameters(resr, fixed_params, old_params):
+    """
+    Update the parameters dictionary with new values.
+    
+    Parameters:
+    - resr: A DataFrame, dict, or similar containing new parameter values. If DataFrame, expects 'Parameter' and 'Estimate' columns.
+    - fixed_params: The fixed parameters that should not be changed.
+    - old_params: The base parameters to be updated.
+    
+    Returns:
+    - new_params: New parameters dictionary with updated values.
+    """
+    import pandas as pd
+    # Copy old_params to avoid mutating the original
+    new_params = old_params.copy()
+    # Update with fixed_params
+    for key, value in fixed_params.items():
+        new_params[key] = value
+    # Handle DataFrame with 'Parameter' and 'Estimate' columns
+    if isinstance(resr, pd.DataFrame):
+        if 'Parameter' in resr.columns and 'Estimate' in resr.columns:
+            res_dict = dict(zip(resr['Parameter'], resr['Estimate']))
+        else:
+            # fallback: use first row if columns are not named
+            res_dict = dict(resr.iloc[0, :])
+    elif isinstance(resr, dict):
+        res_dict = resr
+    else:
+        raise ValueError("resr must be a DataFrame or dict")
+    for key, value in res_dict.items():
+        if key in new_params and key not in fixed_params:
+            new_params[key] = value
+    return new_params

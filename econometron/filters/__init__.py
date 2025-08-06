@@ -241,7 +241,7 @@ class Kalman:
         Xsm = Xsm[:, :-1]
 
         return {
-            'Xsm': Xsm[:,:T],
+            'Xsm': Xsm[:, :T],
             'Xtilde': Xtilde,
             'PP1': PP1,
             'residuals': residuals

@@ -6,6 +6,7 @@ from statsmodels.tsa.stattools import adfuller, kpss
 from statsmodels.stats.stattools import durbin_watson
 from scipy.stats import shapiro, norm ,jarque_bera ,probplot,multivariate_normal
 import logging
+import warnings
 from statsmodels.stats.diagnostic import acorr_ljungbox ,het_arch ,breaks_cusumolsresid
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -181,14 +182,14 @@ class VAR:
       Y=data[lags:]
       return X,Y
   #### Now let's compute aic and Bic :
-  def _compute_aic_bic_hqic(self,Y,resids,K,P,T):
+  def _compute_aic_bic_hqic(self,resids,K,P,T):
     resid_cov=np.cov(resids.T, bias=True)
     #print('resids_cov',resid_cov)
     log_det=np.log(np.linalg.det(resid_cov + 1e-10 * np.eye(K)))
     n_params=K*(K*P+1)
     #print(n_params)
     hqic=log_det+2*np.log(np.log(T))*n_params/T
-    aic=log_det+2*n_params/T
+    aic=log_det+(2*n_params)/T
     bic=log_det+n_params*np.log(T)/T
     return aic,bic,hqic
   ###Build coeff table :
@@ -196,42 +197,74 @@ class VAR:
     if self.best_model is None:
         print("No model fitted. Cannot build coefficient table.")
         return
+    
     beta = self.best_model['beta']
-    se = self.best_model['fullresults']['se']
+    se = self.best_model['fullresults']['se']  
     z_values = self.best_model['fullresults']['z_values']
     p_values = self.best_model['fullresults']['p_values']
     var_names = self.columns if hasattr(self, 'columns') else [f"Var{i+1}" for i in range(len(self.data.columns))]
     K = len(var_names)
+    
+    if not hasattr(self, 'coeff_table') or self.coeff_table is None:
+        columns = [f"{col}_{stat}" for col in var_names for stat in ['coef', 'se', 'z', 'p']]
+        index = ['Constant'] + [f'Lag_{lag+1}_{var}' for lag in range(self.best_p) for var in var_names]
+        self.coeff_table = pd.DataFrame(index=index, columns=columns)
+    
+    for i, col in enumerate(var_names):
+        self.coeff_table.loc['Constant', f'{col}_coef'] = beta[0, i]
+        self.coeff_table.loc['Constant', f'{col}_se'] = se[0, i] if se.shape[0] > 0 else 0
+        self.coeff_table.loc['Constant', f'{col}_z'] = z_values[0, i] if z_values.shape[0] > 0 else 0
+        self.coeff_table.loc['Constant', f'{col}_p'] = p_values[0, i] if p_values.shape[0] > 0 else 0
+    
     for lag in range(self.best_p):
         for j, var in enumerate(var_names):
-            for i, col in enumerate(var_names):
-                idx=lag*K+j
-                row_name = f'Lag_{lag+1}_{var}'
-                self.coeff_table.loc[row_name, f'{col}_coef'] = beta[idx, i]
-                self.coeff_table.loc[row_name, f'{col}_se'] = se[idx, i]
-                self.coeff_table.loc[row_name, f'{col}_z'] = z_values[idx, i]
-                self.coeff_table.loc[row_name, f'{col}_p'] = p_values[idx, i]
+            row_idx = 1 + lag * K + j 
+            row_name = f'Lag_{lag+1}_{var}'
+            if row_idx < beta.shape[0]:
+                for i, col in enumerate(var_names):
+                    self.coeff_table.loc[row_name, f'{col}_coef'] = beta[row_idx, i]
+                    self.coeff_table.loc[row_name, f'{col}_se'] = se[row_idx, i] if row_idx < se.shape[0] else 0
+                    self.coeff_table.loc[row_name, f'{col}_z'] = z_values[row_idx, i] if row_idx < z_values.shape[0] else 0
+                    self.coeff_table.loc[row_name, f'{col}_p'] = p_values[row_idx, i] if row_idx < p_values.shape[0] else 0
+    
     print("=" * 120)
     print(f"VAR({self.best_p}) Coefficient Table")
     print("=" * 120)
+    
+    print("\nConstant Parameters:")
+    print("-" * 120)
+    print(f"{'Variable':<15}", end="")
+    for col in var_names:
+        print(f"| {col+'_coef':<12} {col+'_se':<10} {col+'_z':<8} {col+'_p':<8}", end="")
+    print()
+    print("-" * 120)
+    print(f"{'Constant':<15}", end="")
+    for col in var_names:
+        coef = self.coeff_table.loc['Constant', f'{col}_coef']
+        se_val = self.coeff_table.loc['Constant', f'{col}_se']
+        z_val = self.coeff_table.loc['Constant', f'{col}_z']
+        p_val = self.coeff_table.loc['Constant', f'{col}_p']
+        print(f"| {coef:>10.4f} {se_val:>10.4f} {z_val:>8.4f} {p_val:>8.4f}", end="")
+    print()
+    
     for lag in range(1, self.best_p + 1):
         print(f"\nLag {lag} Parameters:")
-        print("-" * 100)
+        print("-" * 120)
         print(f"{'Variable':<15}", end="")
         for col in var_names:
-            print(f"| {col+'_coef':<12} {col+'_se':<10} {col+'_t':<8} {col+'_p':<8}", end="")
+            print(f"| {col+'_coef':<12} {col+'_se':<10} {col+'_z':<8} {col+'_p':<8}", end="")
         print()
-        print("-" * 100)
+        print("-" * 120)
         for var in var_names:
             row_name = f'Lag_{lag}_{var}'
             if row_name in self.coeff_table.index:
                 print(f"{var:<15}", end="")
                 for col in var_names:
                     coef = self.coeff_table.loc[row_name, f'{col}_coef']
-                    se = self.coeff_table.loc[row_name, f'{col}_se']
-                    t_val = self.coeff_table.loc[row_name, f'{col}_z']
+                    se_val = self.coeff_table.loc[row_name, f'{col}_se']
+                    z_val = self.coeff_table.loc[row_name, f'{col}_z']
                     p_val = self.coeff_table.loc[row_name, f'{col}_p']
-                    print(f"| {coef:>10.4f} {se:>10.4f} {t_val:>8.4f} {p_val:>8.4f}", end="")
+                    print(f"| {coef:>10.4f} {se_val:>10.4f} {z_val:>8.4f} {p_val:>8.4f}", end="")
                 print()
     
     print("=" * 120)
@@ -243,7 +276,7 @@ class VAR:
     for p in range(1,self.max_p+1):
         X,Y=self.lag_matrix(p)
         beta,fitted,resids,res=ols_estimator(X,Y)
-        aic,bic,hqic=self._compute_aic_bic_hqic(Y,resids,K,p,T)
+        aic,bic,hqic=self._compute_aic_bic_hqic(resids,K,p,T)
         self.all_results.append({
           'p':p,
           'beta':beta,
@@ -291,12 +324,12 @@ class VAR:
     if p:
       s=p
       self.max_p=p
-    #print(s,self.max_p)
+    print(s,self.max_p)
     for p in range(s,self.max_p+1):
       try:
         X,Y=self.lag_matrix(p)
         beta,fitted,resids,res=ols_estimator(X,Y)
-        aic,bic,hqic=self._compute_aic_bic_hqic(Y,resids,K,p,T)
+        aic,bic,hqic=self._compute_aic_bic_hqic(resids,K,p,T)
         self.all_results.append({
           'p':p,
           'beta':beta,
@@ -306,19 +339,19 @@ class VAR:
           'aic':aic,
           'bic':bic,
           'hqic':hqic
-        })
-        
+        }) 
         criterion= self.criterion.lower()
         if criterion in ['aic', 'bic', 'hqic']:
           if get_order:
             select_order_table = pd.DataFrame(self.all_results)[['p', 'aic', 'bic', 'hqic']].sort_values(by=criterion).reset_index(drop=True)
             print(select_order_table)
             return select_order_table
-          criterion=locals()[self.criterion.lower()]
-          if criterion < self.best_criterion_value:
-            self.best_criterion_value = criterion
-            self.best_model = self.all_results[-1]
-            self.best_p = p
+          crit=locals()[self.criterion.lower()]
+          if crit< self.best_criterion_value:
+              print(self.best_criterion_value)  
+              self.best_criterion_value = crit
+              self.best_model = self.all_results[-1]
+              self.best_p = p
       except Exception as e:
         print(f'Failed for p={p}: {e}')
         continue
@@ -591,122 +624,158 @@ class VAR:
     return Diagnosis
   def _orthogonalize(self, Sigma):
       return np.linalg.cholesky(Sigma)
-  def impulse_res(self, h=10, orth=True, bootstrap=False, n_boot=1000, plot=False, tol=1e-6):
-      if self.best_model is None:
-          raise ValueError("No model fitted. Cannot compute IRF.")
+  def predict(self, n_periods=1, plot=True):
+    if self.best_model is None:
+        raise ValueError("No model fitted. Cannot generate forecasts.")
+    if not self.fitted:
+        print("Warning: The model is not fully fitted; forecasts may be unreliable.")
+    # === Model setup ===
+    K = len(self.columns)
+    p = self.best_model['p']
+    beta = self.best_model['beta']
+    Sigma = np.cov(self.best_model['residuals'].T)
+    intercept = beta[0, :]
+    coeffs=beta[1:,:]
+    # print(coeffs.shape)
+    # A = np.zeros((K, K, p))
+    # for j in range(p):
+    #     A[:, :, j] = coeffs[K*j:K*(j+1),:].reshape(K, K).T
+    A = coeffs.reshape(p,K,K).transpose(2, 1, 0)
+    # print(A.shape)
+    # print(A[:,:,1])
+    # === Forecast generation ===
+    if isinstance(self.data.index, pd.DatetimeIndex):
+      forecast_dates = pd.date_range(start=self.data.index[-1] + pd.Timedelta(days=1),periods=n_periods,freq=self.data.index.freq or 'D')
+    else:
+      forecast_dates = range(len(self.data), len(self.data)+n_periods)
+    forecasts = np.zeros((n_periods, K))
+    forecast_vars = np.zeros((n_periods, K))
+    last_observations = self.data.values[-p:].copy()
+    # print(last_observations)
+    z_vector=np.flipud(last_observations).T
+    # print(z_vector)
+    Psi = np.zeros((n_periods, K, K))
+    Psi[0] = np.eye(K)
+    for s in range(1, n_periods):
+      for j in range(1,min(p,s)+1):
+        Psi[s]+=Psi[s-j]@A[:,:,j-1]
+    # print(Psi)
+    for t in range(n_periods):
+      forecast_t = intercept.copy()
+      # print('inter',intercept)
+      for lag in range(1,p+1):
+        lag_idx=t-lag
+        lag_val=forecasts[lag_idx] if lag_idx>=0 else last_observations[lag_idx]
+        # print('lag_val',lag_val)
+        # print('a',A[:,:,lag-1])
+        forecast_t+=A[:,:,lag-1]@lag_val.T
+        # print(forecast_t)
+      forecasts[t]=forecast_t
+      for j in range(K):
+        var_j=0
+        for s in range(t+1):
+          psi=Psi[s,j,:]
+          var_j+=psi@Sigma@psi.T
+        forecast_vars[t,j]=max(var_j,0)
+    #print(forecast_t)
+    se=np.sqrt(forecast_vars)
+    z=norm.ppf(1-self.ci_alpha/2)
+    ci_lower=forecasts-z*se
+    ci_upper=forecasts+z*se
+    forecast_df = pd.DataFrame(forecasts, index=forecast_dates, columns=self.columns)
+    ci_lower_df = pd.DataFrame(ci_lower, index=forecast_dates, columns=self.columns)
+    ci_upper_df = pd.DataFrame(ci_upper, index=forecast_dates, columns=self.columns)
+    #print(forecast_df)
+    if plot:
+      T, _ = self.data.shape
+      whole_data = pd.concat([self.data, forecast_df], axis=0)
+      fig, axes = plt.subplots(len(self.columns), 1, figsize=(12, 4 * len(self.columns)), sharex=True)
+      if len(self.columns) == 1:
+          axes = [axes]
+      for i, col in enumerate(self.columns):
+          ax = axes[i]
+          total_time = T + n_periods
+          time_range = np.arange(total_time)
+          ax.plot(time_range[:T], whole_data[col].iloc[:T], 'b-', label='Historical', linewidth=1.5)
+          ax.plot(time_range[T-1:T+n_periods], whole_data[col].iloc[T-1:T+n_periods],'k--', linewidth=1.5, label='Forecast' if i == 0 else "")
+          ax.fill_between(time_range[T:], 
+                          ci_lower_df[col].iloc[:n_periods], 
+                          ci_upper_df[col].iloc[:n_periods], 
+                          color='skyblue', 
+                          alpha=0.4, 
+                          label=f'{100 * (1 - self.ci_alpha):.0f}% CI' if i == 0 else "")
+          ax.axvline(T - 1, color='gray', linestyle=':', linewidth=1)
+          ax.set_title(f'Forecast for {col}')
+          ax.set_xlabel('Time')
+          ax.set_ylabel('Value')
+          ax.grid(True, alpha=0.3)
+          ax.legend(loc='upper left')
+      plt.tight_layout()
+      plt.show()
+      return {'point': forecast_df,'ci_lower': ci_lower_df,'ci_upper': ci_upper_df}
+      #### predict : ver
+  def simulate(self, n_periods=100, plot=True, tol=1e-6):
       K = len(self.columns)
       p = self.best_model['p']
       beta = self.best_model['beta']
       intercept_included = beta.shape[0] == K * p + 1
+      intercept = beta[0] if intercept_included else np.zeros(K)
       A = beta[1:] if intercept_included else beta
-      A = A.reshape(p, K, K).transpose(1, 2, 0)
-      Psi = np.zeros((h, K, K))
-      Psi[0] = np.eye(K)
-      for i in range(1, h):
-          for j in range(min(i, p)):
-              Psi[i] += A[:, :, j] @ Psi[i - j - 1]
-      if orth:
-          Sigma = np.cov(self.best_model['residuals'].T)
-          P = self._orthogonalize(Sigma)
-          irf = np.array([Psi[i] @ P for i in range(h)])
-      else:
-          irf = Psi
-      if not bootstrap:
-          if plot:
-              fig, axes = plt.subplots(K, K, figsize=(12, 8), sharex=True)
-              axes = axes.flatten() if K > 1 else [axes]
-              for i in range(K):
-                  for j in range(K):
-                      idx = i * K + j
-                      axes[idx].plot(range(h), irf[:, i, j], label=f'Shock {self.columns[j]} → {self.columns[i]}')
-                      axes[idx].set_title(f'{self.columns[i]} response to {self.columns[j]} shock')
-                      axes[idx].set_xlabel('Horizon')
-                      axes[idx].set_ylabel('Response')
-                      axes[idx].grid(True)
-                      axes[idx].legend()
-              plt.tight_layout()
-              plt.show()
-          return irf
-      boot_irfs = np.zeros((n_boot, h, K, K))
-      residuals = self.best_model['residuals']
-      T, K = residuals.shape
-      data = self.data.values
-      for b in range(n_boot):
-          boot_idx = np.random.choice(T, size=T, replace=True)
-          boot_resids = residuals[boot_idx]
-          Y_sim = np.zeros((T + p, K))
-          Y_sim[:p] = data[-p:]
-          intercept = beta[0] if intercept_included else np.zeros(K)
-          for t in range(p, T + p):
-              Y_t = intercept.copy()
-              for j in range(p):
-                  Y_t += A[:, :, j] @ Y_sim[t - j - 1]
-              Y_t += boot_resids[t - p]
-              Y_sim[t] = Y_t
-          Y_sim = Y_sim[p:]
-          X, Y = self.lag_matrix(p)
-          try:
-              boot_beta, _, _, _ = ols_estimator(X, Y_sim, tol=tol)
-          except Exception as e:
-              logger.warning(f"Bootstrap iteration {b} failed: {e}")
-              continue
-          boot_A = boot_beta[1:] if boot_beta.shape[0] == K * p + 1 else boot_beta
-          boot_A = boot_A.reshape(p, K, K).transpose(1, 2, 0)
-          boot_Psi = np.zeros((h, K, K))
-          boot_Psi[0] = np.eye(K)
-          for i in range(1, h):
-              for j in range(min(i, p)):
-                  boot_Psi[i] += boot_A[:, :, j] @ boot_Psi[i - j - 1]
-          if orth:
-              boot_Sigma = np.cov(boot_resids.T)
-              try:
-                  P = self._orthogonalize(boot_Sigma)
-                  boot_irf = np.array([boot_Psi[i] @ P for i in range(h)])
-              except np.linalg.LinAlgError:
-                  logger.warning(f"Bootstrap iteration {b} failed: Non-positive definite covariance")
-                  continue
-          else:
-              boot_irf = boot_Psi
-          boot_irfs[b] = boot_irf
-      ci_lower = np.percentile(boot_irfs, 100 * self.ci_alpha / 2, axis=0)
-      ci_upper = np.percentile(boot_irfs, 100 * (1 - self.ci_alpha / 2), axis=0)
+      A = A.reshape(p, K, K).transpose(2, 1, 0)
+      #print(A[:,:,0])
+      Sigma = np.cov(self.best_model['residuals'].T)
+      Y_sim = np.zeros((n_periods+p,K))
+      Y_sim[:p] =np.flipud(self.data.values[-p:])
+      #Y_sim[:p] = self.data.values[-p:]
+      # print(Y_sim)
+      #print(Y_sim)
+      for t in range(p, n_periods + p):
+        Y_t = intercept.copy()
+        for j in range(p):
+          Y_t += A[:, :, j] @ Y_sim[t - j - 1]
+          Y_t += multivariate_normal.rvs(mean=np.zeros(K), cov=Sigma)
+          Y_sim[t] = Y_t
+      Y_sim = Y_sim[p:]
       if plot:
-          fig, axes = plt.subplots(K, K, figsize=(12, 8), sharex=True)
-          axes = axes.flatten() if K > 1 else [axes]
-          for i in range(K):
-              for j in range(K):
-                  idx = i * K + j
-                  axes[idx].plot(range(h), irf[:, i, j], label=f'Shock {self.columns[j]} → {self.columns[i]}')
-                  axes[idx].fill_between(range(h), ci_lower[:, i, j], ci_upper[:, i, j],
-                                          alpha=0.3, color='red', label=f'{100 * (1 - self.ci_alpha)}% CI')
-                  axes[idx].set_title(f'{self.columns[i]} response to {self.columns[j]} shock')
-                  axes[idx].set_xlabel('Horizon')
-                  axes[idx].set_ylabel('Response')
-                  axes[idx].grid(True)
-                  axes[idx].legend()
-          plt.tight_layout()
-          plt.show()
-      return irf, ci_lower, ci_upper
-
+        fig, axes = plt.subplots(K, 1, figsize=(10, 4 * K), sharex=True)
+        axes = [axes] if K == 1 else axes
+        for i in range(K):
+          axes[i].plot(Y_sim[:, i], label=f'Simulated {self.columns[i]}')
+          axes[i].set_title(f'Simulated Series for {self.columns[i]}')
+          axes[i].set_xlabel('Time')
+          axes[i].set_ylabel('Value')
+          axes[i].legend()
+          axes[i].grid(True)
+        plt.tight_layout()
+        plt.show()
+      return {'simulations':Y_sim}
+    #sim_ver
   def FEVD(self, h=10, plot=False):
       K = len(self.columns)
       irf = self.impulse_res(h=h, orth=True, bootstrap=False, plot=False)
       Sigma = np.cov(self.best_model['residuals'].T)
-      fevd = np.zeros((h, K, K))
-      mse = np.zeros((h, K))
-      for i in range(h):
-          for j in range(K):
-              for t in range(i + 1):
-                  mse[i, j] += np.sum(irf[t, j, :] ** 2 * np.diag(Sigma))
+      P = np.linalg.cholesky(Sigma).T
+      fevd = np.zeros((h+1, K, K))
+      mse = np.zeros((h+1, K))
+      for i in range(h+1):
+          for j in range(K): 
+              for t in range(i+1):
+                  phi_t = irf[t, j, :]  
+                  mse[i, j] += np.dot(phi_t, phi_t)
               for k in range(K):
-                  fevd[i, j, k] = np.sum(irf[:i + 1, j, k] ** 2 * Sigma[k, k]) / mse[i, j] if mse[i, j] != 0 else 0
+                  fevd[i, j, k] = np.sum(irf[:i+1, j, k] ** 2) / mse[i, j] if mse[i, j] != 0 else 0
+      for i in range(h+1):
+          for j in range(K):
+              total = np.sum(fevd[i, j, :])
+              if total > 0:
+                  fevd[i, j, :] /= total
       if plot:
           fig, axes = plt.subplots(K, 1, figsize=(10, 4 * K), sharex=True)
           axes = [axes] if K == 1 else axes
           for j in range(K):
-              bottom = np.zeros(h)
+              bottom = np.zeros(h+1)
               for k in range(K):
-                  axes[j].bar(range(h), fevd[:, j, k], bottom=bottom, label=f'Shock from {self.columns[k]}')
+                  axes[j].bar(range(h+1), fevd[:, j, k], bottom=bottom, label=f'Shock from {self.columns[k]}')
                   bottom += fevd[:, j, k]
               axes[j].set_title(f'FEVD for {self.columns[j]}')
               axes[j].set_xlabel('Horizon')
@@ -716,106 +785,106 @@ class VAR:
           plt.tight_layout()
           plt.show()
       return fevd
-
-  def simulate(self, n_periods=100, plot=False, tol=1e-6):
-      K = len(self.columns)
-      p = self.best_model['p']
-      beta = self.best_model['beta']
-      intercept_included = beta.shape[0] == K * p + 1
-      intercept = beta[0] if intercept_included else np.zeros(K)
-      A = beta[1:] if intercept_included else beta
-      A = A.reshape(p, K, K).transpose(1, 2, 0)
-      Sigma = np.cov(self.best_model['residuals'].T)
-      Y_sim = np.zeros((n_periods + p, K))
-      Y_sim[:p] = self.data.values[-p:]
-      for t in range(p, n_periods + p):
-          Y_t = intercept.copy()
-          for j in range(p):
-              Y_t += A[:, :, j] @ Y_sim[t - j - 1]
-          Y_t += multivariate_normal.rvs(mean=np.zeros(K), cov=Sigma)
-          Y_sim[t] = Y_t
-      Y_sim = Y_sim[p:]
-      if plot:
-          fig, axes = plt.subplots(K, 1, figsize=(10, 4 * K), sharex=True)
-          axes = [axes] if K == 1 else axes
-          for i in range(K):
-              axes[i].plot(Y_sim[:, i], label=f'Simulated {self.columns[i]}')
-              axes[i].set_title(f'Simulated Series for {self.columns[i]}')
-              axes[i].set_xlabel('Time')
-              axes[i].set_ylabel('Value')
-              axes[i].legend()
-              axes[i].grid(True)
-          plt.tight_layout()
-          plt.show()
-      return Y_sim
-
-  def predict(self, n_periods=1, plot=True, tol=1e-6):
-      if self.best_model is None:
-          raise ValueError("No model fitted. Cannot generate forecasts.")
-      if not self.fitted:
-          logger.warning("The model is not fully fitted; forecasts may be unreliable.")
-      K = len(self.columns)
-      p = self.best_model['p']
-      beta = self.best_model['beta']
-      intercept_included = beta.shape[0] == K * p + 1
-      intercept = beta[0] if intercept_included else np.zeros(K)
-      A = beta[1:] if intercept_included else beta
-      A = A.reshape(p, K, K).transpose(1, 2, 0)
-      h = n_periods if n_periods > 0 else self.forecast_horizon
-      if isinstance(self.data.index, pd.DatetimeIndex):
-          forecast_dates = pd.date_range(
-              start=self.data.index[-1] + pd.Timedelta(days=1),
-              periods=h,
-              freq=self.data.index.freq or 'D'
-          )
+  def impulse_res(self, h=10, orth=True, bootstrap=False, n_boot=1000, plot=False, tol=1e-6):
+    if self.best_model is None:
+      raise ValueError("No model fitted. Cannot compute IRF.")
+    K = len(self.columns)
+    p = self.best_model['p']
+    beta = self.best_model['beta']
+    intercept_included = beta.shape[0] == K * p + 1
+    A = beta[1:] if intercept_included else beta
+    A = A.reshape(p,K,K).transpose(2,1,0)
+    #print(A)
+    Psi = np.zeros((h+1, K, K))
+    Psi[0] = np.eye(K)
+    for i in range(1, h+1):
+      for j in range(min(i, p)):
+        Psi[i] += A[:, :,j] @ Psi[i-j-1]
+      if orth:
+        Sigma = np.cov(self.best_model['residuals'].T)
+        P = self._orthogonalize(Sigma)
+        irf = np.array([Psi[i] @ P for i in range(h+1)])
       else:
-          forecast_dates = range(len(self.data), len(self.data) + h)
-      forecasts = np.zeros((h, K))
-      forecast_vars = np.zeros((h, K))
-      last_observations = self.data.values[-p:].copy()
-      Sigma = np.cov(self.best_model['residuals'].T)
-      Psi = np.zeros((h, K, K))
-      Psi[0] = np.eye(K)
-      for i in range(1, h):
-          for j in range(min(i, p)):
-              Psi[i] += A[:, :, j] @ Psi[i - j - 1]
-      for t in range(h):
-          X_forecast = np.ones((1, 1)) if intercept_included else np.zeros((1, 0))
-          for lag in range(1, p + 1):
-              lag_data = forecasts[t - lag:t - lag + 1] if t >= lag else last_observations[p - lag:p - lag + 1]
-              X_forecast = np.hstack((X_forecast, lag_data))
-          forecasts[t] = X_forecast @ beta
-          for j in range(K):
-              var = 0
-              for s in range(t + 1):
-                  var += Psi[s, j, :] @ Sigma @ Psi[s, j, :].T
-              forecast_vars[t, j] = var
-      se = np.sqrt(forecast_vars)
-      ci_lower = forecasts - norm.ppf(1 - self.ci_alpha / 2) * se
-      ci_upper = forecasts + norm.ppf(1 - self.ci_alpha / 2) * se
-      forecast_df = pd.DataFrame(forecasts, index=forecast_dates, columns=self.columns)
-      ci_lower_df = pd.DataFrame(ci_lower, index=forecast_dates, columns=self.columns)
-      ci_upper_df = pd.DataFrame(ci_upper, index=forecast_dates, columns=self.columns)
+        irf = Psi
+    #print(irf.shape)
+    # z = 1.96  
+    # band_width = 0.05 
+    # ci_lower = irf - z * band_width
+    # ci_upper = irf + z * band_width
+    if not bootstrap:
       if plot:
-          n_vars = len(self.columns)
-          n_cols = min(2, n_vars)
-          n_rows = (n_vars + n_cols - 1) // n_cols
-          fig, axes = plt.subplots(n_rows, n_cols, figsize=(12, 4 * n_rows), sharex=True)
-          axes = np.array(axes).flatten() if n_vars > 1 else [axes]
-          for i, col in enumerate(self.columns):
-              ax = axes[i]
-              hist_data = self.data[col].iloc[-min(50, len(self.data)):]
-              ax.plot(hist_data.index, hist_data.values, 'b-', label='Historical', linewidth=1.5)
-              ax.plot(forecast_df.index, forecast_df[col], 'r-', label='Forecast', linewidth=2)
-              ax.fill_between(forecast_df.index, ci_lower_df[col], ci_upper_df[col],
-                              alpha=0.3, color='red', label=f'{100 * (1 - self.ci_alpha)}% CI')
-              ax.set_title(f'Forecast for {col}')
-              ax.set_xlabel('Time')
-              ax.set_ylabel('Value')
-              ax.legend()
-              ax.grid(True, alpha=0.3)
-          for j in range(n_vars, len(axes)):
-              axes[j].set_visible(False)
+        fig, axes = plt.subplots(K, K, figsize=(15,15), sharex=True)
+        axes = axes.flatten() if K > 1 else [axes]
+        for i in range(K):
+          for j in range(K):
+            idx = i * K + j
+            axes[idx].plot(range(h+1), irf[:,i,j], label=f'Shock {self.columns[j]} → {self.columns[i]}')
+            #axes[idx].fill_between(range(h+1), ci_lower[:, i, j], ci_upper[:, i, j],alpha=0.3, color='r', label=f'{100 * (1 - self.ci_alpha)}% CI')
+            axes[idx].set_title(f'{self.columns[i]} response to {self.columns[j]} shock')
+            axes[idx].set_xlabel('Horizon')
+            axes[idx].set_ylabel('Response')
+            axes[idx].grid(True)
+            axes[idx].legend()
+        plt.tight_layout()
+        plt.show()
+      return irf
+    else: 
+      boot_irfs = np.zeros((n_boot, h+1, K, K))
+      residuals = self.best_model['residuals']
+      T, K = residuals.shape
+      data = self.data.values
+      for b in range(n_boot):
+        boot_idx=np.random.choice(T,size=T,replace=True)
+        boot_resids=residuals[boot_idx]
+        Y_sim=np.zeros((T+p,K))
+        Y_sim[:p]=np.flipud(data[-p:])
+        intercept=beta[0] if intercept_included else np.zeros(K)
+        for t in range(p,T+p):
+          Y_t=intercept.copy()
+          for j in range(p):
+            Y_t+=A[:, :, j] @ Y_sim[t-j-1]
+          Y_t+=boot_resids[t-p]
+          Y_sim[t] = Y_t
+        Y_sim = Y_sim[p:]
+        X, Y = self.lag_matrix(p)
+        try:
+            boot_beta, _, _, _ = ols_estimator(X, Y_sim, tol=tol)
+        except Exception as e:
+            logger.warning(f"Bootstrap iteration {b} failed: {e}")
+            continue
+        boot_A = boot_beta[1:] if boot_beta.shape[0] == K * p + 1 else boot_beta
+        boot_A = boot_A.reshape(p, K, K).transpose(2, 1, 0)
+        boot_Psi = np.zeros((h+1, K, K))
+        boot_Psi[0] = np.eye(K)
+        for i in range(1, h+1):
+            for j in range(min(i, p)):
+                boot_Psi[i]+=boot_A[:, :, j]@boot_Psi[i - j - 1]
+        if orth:
+            boot_Sigma = np.cov(boot_resids.T)
+            try:
+                P = self._orthogonalize(boot_Sigma)
+                boot_irf = np.array([boot_Psi[i] @ P for i in range(h+1)])
+            except np.linalg.LinAlgError:
+                logger.warning(f"Bootstrap iteration {b} failed: Non-positive definite covariance")
+                continue
+        else:
+            boot_irf = boot_Psi
+        boot_irfs[b] = boot_irf
+      ci_lower = np.percentile(boot_irfs, 100 * self.ci_alpha / 2, axis=0)
+      ci_upper = np.percentile(boot_irfs, 100 * (1 - self.ci_alpha / 2), axis=0)
+      if plot:
+          fig, axes = plt.subplots(K, K, figsize=(12, 8), sharex=True)
+          axes = axes.flatten() if K > 1 else [axes]
+          for i in range(K):
+              for j in range(K):
+                  idx = i * K + j
+                  axes[idx].plot(range(h+1), irf[:, i, j], label=f'Shock {self.columns[j]} → {self.columns[i]}')
+                  axes[idx].fill_between(range(h+1), ci_lower[:, i, j], ci_upper[:, i, j],alpha=0.3, color='red', label=f'{100 * (1 - self.ci_alpha)}% CI')
+                  axes[idx].set_title(f'{self.columns[i]} response to {self.columns[j]} shock')
+                  axes[idx].set_xlabel('Horizon')
+                  axes[idx].set_ylabel('Response')
+                  axes[idx].grid(True)
+                  axes[idx].legend()
           plt.tight_layout()
           plt.show()
-      return {'point': forecast_df, 'ci_lower': ci_lower_df, 'ci_upper': ci_upper_df}
+    return {'irf':irf,'ci_lower':ci_lower, 'ci_upper':ci_upper}
