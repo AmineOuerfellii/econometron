@@ -6,7 +6,7 @@ from statsmodels.tsa.stattools import adfuller, kpss
 from statsmodels.stats.stattools import durbin_watson
 from scipy.stats import shapiro, norm ,jarque_bera ,probplot,multivariate_normal
 import logging
-import warnings
+
 from statsmodels.stats.diagnostic import acorr_ljungbox ,het_arch ,breaks_cusumolsresid
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -197,28 +197,25 @@ class VAR:
     if self.best_model is None:
         print("No model fitted. Cannot build coefficient table.")
         return
-    
     beta = self.best_model['beta']
-    se = self.best_model['fullresults']['se']  
+    se = self.best_model['fullresults']['se']
     z_values = self.best_model['fullresults']['z_values']
     p_values = self.best_model['fullresults']['p_values']
     var_names = self.columns if hasattr(self, 'columns') else [f"Var{i+1}" for i in range(len(self.data.columns))]
     K = len(var_names)
-    
     if not hasattr(self, 'coeff_table') or self.coeff_table is None:
         columns = [f"{col}_{stat}" for col in var_names for stat in ['coef', 'se', 'z', 'p']]
         index = ['Constant'] + [f'Lag_{lag+1}_{var}' for lag in range(self.best_p) for var in var_names]
         self.coeff_table = pd.DataFrame(index=index, columns=columns)
-    
     for i, col in enumerate(var_names):
         self.coeff_table.loc['Constant', f'{col}_coef'] = beta[0, i]
         self.coeff_table.loc['Constant', f'{col}_se'] = se[0, i] if se.shape[0] > 0 else 0
         self.coeff_table.loc['Constant', f'{col}_z'] = z_values[0, i] if z_values.shape[0] > 0 else 0
         self.coeff_table.loc['Constant', f'{col}_p'] = p_values[0, i] if p_values.shape[0] > 0 else 0
-    
+
     for lag in range(self.best_p):
         for j, var in enumerate(var_names):
-            row_idx = 1 + lag * K + j 
+            row_idx = 1 + lag * K + j
             row_name = f'Lag_{lag+1}_{var}'
             if row_idx < beta.shape[0]:
                 for i, col in enumerate(var_names):
@@ -226,11 +223,11 @@ class VAR:
                     self.coeff_table.loc[row_name, f'{col}_se'] = se[row_idx, i] if row_idx < se.shape[0] else 0
                     self.coeff_table.loc[row_name, f'{col}_z'] = z_values[row_idx, i] if row_idx < z_values.shape[0] else 0
                     self.coeff_table.loc[row_name, f'{col}_p'] = p_values[row_idx, i] if row_idx < p_values.shape[0] else 0
-    
+
     print("=" * 120)
     print(f"VAR({self.best_p}) Coefficient Table")
     print("=" * 120)
-    
+
     print("\nConstant Parameters:")
     print("-" * 120)
     print(f"{'Variable':<15}", end="")
@@ -246,7 +243,7 @@ class VAR:
         p_val = self.coeff_table.loc['Constant', f'{col}_p']
         print(f"| {coef:>10.4f} {se_val:>10.4f} {z_val:>8.4f} {p_val:>8.4f}", end="")
     print()
-    
+
     for lag in range(1, self.best_p + 1):
         print(f"\nLag {lag} Parameters:")
         print("-" * 120)
@@ -266,7 +263,7 @@ class VAR:
                     p_val = self.coeff_table.loc[row_name, f'{col}_p']
                     print(f"| {coef:>10.4f} {se_val:>10.4f} {z_val:>8.4f} {p_val:>8.4f}", end="")
                 print()
-    
+
     print("=" * 120)
   ### order_select:
   def order_select(self):
@@ -287,12 +284,12 @@ class VAR:
           'bic':bic,
           'hqic':hqic
         })
-        
+
     criterion= self.criterion.lower()
     if criterion in ['aic', 'bic', 'hqic']:
         select_order_table = pd.DataFrame(self.all_results)[['p', 'aic', 'bic', 'hqic']].sort_values(by=criterion).reset_index(drop=True)
     return select_order_table
-    #### this test , so for now i'll keep it this way , although we can use this in the next func fit but for now let's keep it this way 
+    #### this test , so for now i'll keep it this way , although we can use this in the next func fit but for now let's keep it this way
   ### the Fit method
   def fit(self,columns=None,p=None,output=True,get_order=False):
     ###First let's see an verify if data are now stationnary:
@@ -339,16 +336,16 @@ class VAR:
           'aic':aic,
           'bic':bic,
           'hqic':hqic
-        }) 
+        })
         criterion= self.criterion.lower()
         if criterion in ['aic', 'bic', 'hqic']:
           if get_order:
             select_order_table = pd.DataFrame(self.all_results)[['p', 'aic', 'bic', 'hqic']].sort_values(by=criterion).reset_index(drop=True)
-            print(select_order_table)
+            #print(select_order_table)
             return select_order_table
           crit=locals()[self.criterion.lower()]
           if crit< self.best_criterion_value:
-              #print(self.best_criterion_value)  
+              #print(self.best_criterion_value)
               self.best_criterion_value = crit
               self.best_model = self.all_results[-1]
               self.best_p = p
@@ -357,7 +354,7 @@ class VAR:
         continue
     if self.best_model is None:
       raise ValueError("No valid VAR model could be fitted")
-    
+
     # C=len(self.columns)
     # for i,col in enumerate(self.columns) :
     #   for lag in range(self.best_p):
@@ -372,7 +369,7 @@ class VAR:
     #   self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_z'] = self.best_model['fullresults']['z_values'][idx, i]
     #   self.coeff_table.loc[f'Lag_{lag+1}_{var}', f'{col}_p'] = self.best_model['fullresults']['p_values'][idx, i]
     ##### needs to complete all , add summary ,and plot option to see we've done on the fitting on train data or whatever
-    ###Note :completed that below 
+    ###Note :completed that below
     if self.best_model :
       if output:
         self.build_and_display_coeff_table()
@@ -500,7 +497,7 @@ class VAR:
     arch_res=[]
     for i in range(K):
       arch_test = het_arch(resids[:, i])
-      arch_res.append('pass' if arch_test[1] >=  0.5 else 'Fail')
+      arch_res.append('pass' if arch_test[1] >=  0.05 else 'Fail')
       print(f"Residual {i}: ARCH p-value = {arch_test[1]:.4f} → {arch_res[i]}")
     arch_tests=arch_res.count('pass')/K
     if arch_tests != 1:
@@ -582,7 +579,7 @@ class VAR:
     if plot:
       T, K = resids.shape
       fig_height = 4 * (K + 1)
-      fig, axes = plt.subplots(nrows=K + 1, ncols=2, figsize=(12, fig_height))  
+      fig, axes = plt.subplots(nrows=K + 1, ncols=2, figsize=(12, fig_height))
       # === CUSUM Plot  ===
       cusum_stat, cusum_pval, cusum_crit = breaks_cusumolsresid(resids, ddof=0)
       flat_resid = resids.flatten()
@@ -592,10 +589,10 @@ class VAR:
       cusum_series = np.cumsum(resid_centered) / (resid_std * np.sqrt(n))
       critical_value = None
       for sig_level, crit_val in cusum_crit:
-          if sig_level == 5: 
+          if sig_level == 5:
               critical_value = crit_val
               break
-      
+
       if critical_value is None:
           critical_value = 1.36
       ax_cusum = plt.subplot2grid((K + 1, 2), (0, 0), colspan=2)
@@ -608,17 +605,17 @@ class VAR:
       ax_cusum.set_xlabel("Time Index")
       ax_cusum.set_ylabel("Standardized CUSUM")
       ax_cusum.legend()
-      ax_cusum.grid(True, alpha=0.3) 
+      ax_cusum.grid(True, alpha=0.3)
       # === 2. Histogram + Q–Q Plots per residual===
       for i in range(K):
           ax_hist = plt.subplot2grid((K + 1, 2), (i + 1, 0))
           ax_hist.hist(resids[:, i], bins=30, density=True, alpha=0.7, color='steelblue')
           ax_hist.set_title(f"Histogram of Residual {i} ({self.columns[i]})")
           ax_hist.set_xlabel("Residual Value")
-          ax_hist.set_ylabel("Density")        
+          ax_hist.set_ylabel("Density")
           ax_qq = plt.subplot2grid((K + 1, 2), (i + 1, 1))
           probplot(resids[:, i], dist="norm", plot=ax_qq)
-          ax_qq.set_title(f"Q–Q Plot for Residual {i} ({self.columns[i]})")  
+          ax_qq.set_title(f"Q–Q Plot for Residual {i} ({self.columns[i]})")
       plt.tight_layout()
       plt.show()
     return Diagnosis
@@ -698,11 +695,11 @@ class VAR:
           time_range = np.arange(total_time)
           ax.plot(time_range[:T], whole_data[col].iloc[:T], 'b-', label='Historical', linewidth=1.5)
           ax.plot(time_range[T-1:T+n_periods], whole_data[col].iloc[T-1:T+n_periods],'k--', linewidth=1.5, label='Forecast' if i == 0 else "")
-          ax.fill_between(time_range[T:], 
-                          ci_lower_df[col].iloc[:n_periods], 
-                          ci_upper_df[col].iloc[:n_periods], 
-                          color='skyblue', 
-                          alpha=0.4, 
+          ax.fill_between(time_range[T:],
+                          ci_lower_df[col].iloc[:n_periods],
+                          ci_upper_df[col].iloc[:n_periods],
+                          color='skyblue',
+                          alpha=0.4,
                           label=f'{100 * (1 - self.ci_alpha):.0f}% CI' if i == 0 else "")
           ax.axvline(T - 1, color='gray', linestyle=':', linewidth=1)
           ax.set_title(f'Forecast for {col}')
@@ -758,9 +755,9 @@ class VAR:
       fevd = np.zeros((h+1, K, K))
       mse = np.zeros((h+1, K))
       for i in range(h+1):
-          for j in range(K): 
+          for j in range(K):
               for t in range(i+1):
-                  phi_t = irf[t, j, :]  
+                  phi_t = irf[t, j, :]
                   mse[i, j] += np.dot(phi_t, phi_t)
               for k in range(K):
                   fevd[i, j, k] = np.sum(irf[:i+1, j, k] ** 2) / mse[i, j] if mse[i, j] != 0 else 0
@@ -807,8 +804,8 @@ class VAR:
       else:
         irf = Psi
     #print(irf.shape)
-    # z = 1.96  
-    # band_width = 0.05 
+    # z = 1.96
+    # band_width = 0.05
     # ci_lower = irf - z * band_width
     # ci_upper = irf + z * band_width
     if not bootstrap:
@@ -828,7 +825,7 @@ class VAR:
         plt.tight_layout()
         plt.show()
       return irf
-    else: 
+    else:
       boot_irfs = np.zeros((n_boot, h+1, K, K))
       residuals = self.best_model['residuals']
       T, K = residuals.shape
@@ -879,7 +876,7 @@ class VAR:
               for j in range(K):
                   idx = i * K + j
                   axes[idx].plot(range(h+1), irf[:, i, j], label=f'Shock {self.columns[j]} → {self.columns[i]}')
-                  axes[idx].fill_between(range(h+1), ci_lower[:, i, j], ci_upper[:, i, j],alpha=0.3, color='red', label=f'{100 * (1 - self.ci_alpha)}% CI')
+                  axes[idx].fill_between(range(h+1), ci_upper[:, i, j], ci_lower[:, i, j],alpha=0.3, color='red', label=f'{100 * (1 - self.ci_alpha)}% CI')
                   axes[idx].set_title(f'{self.columns[i]} response to {self.columns[j]} shock')
                   axes[idx].set_xlabel('Horizon')
                   axes[idx].set_ylabel('Response')
