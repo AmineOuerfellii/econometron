@@ -1,5 +1,5 @@
 import pandas as pd
-from econometron.utils.estimation.OLS import ols_estimator
+from econometron.utils.estimation.Regression import ols_estimator
 import numpy as np
 from typing import List, Optional, Dict, Any
 import matplotlib.pyplot as plt

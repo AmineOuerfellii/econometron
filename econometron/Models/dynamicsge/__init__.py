@@ -133,7 +133,7 @@ class linear_dsge():
 
   def _parse_equations(self,eq):
     """
-    Remodel._parse_equations(eq), is the function resposable of parsing the equations of a certain dynmic model
+    model._parse_equations(eq), is the function resposable of parsing the equations of a certain dynmic model
     This pacakge enables Users to write function as they are in the model , no traditional techniques are used
     so a user can write his model a a "String" and this function is the parser
 
@@ -247,29 +247,30 @@ class linear_dsge():
   def compute_ss(self, guess=None, method='fsolve', options=None):
       if options is None:
           options = {}
-
-      endogenous_vars = [var for var in self.variables if var not in self.exo_states]
-      n_endogenous_vars = len(endogenous_vars)
-      exo_ss_values = {}
-      for var in self.exo_states:
-              if hasattr(self, 'normalize') and var in self.normalize:
-                  # specified override always takes priority
-                  exo_ss_values[var] = float(self.normalize[var])
-              elif self.steady_state is not None and var in self.steady_state:
-                  exo_ss_values[var] = float(self.steady_state[var])
-              else:
-                  # Default fallback
-                  exo_ss_values[var] = 1.0 if self.approximation=="log_linear" else 0.0
-
-      if guess is None:
-          print("No initial guess provided. Using ones as default.")
-          guess = np.ones(n_endogenous_vars)  # Better default than zeros
-          print(guess)
+      if self.initial_guess:
+          guess=self.initial_guess
       else:
-          guess = np.array(guess, dtype=float)
+        endogenous_vars = [var for var in self.variables if var not in self.exo_states]
+        n_endogenous_vars = len(endogenous_vars)
+        exo_ss_values = {}
+        for var in self.exo_states:
+                if hasattr(self, 'normalize') and var in self.normalize:
+                    # specified override always takes priority
+                    exo_ss_values[var] = float(self.normalize[var])
+                elif self.steady_state is not None and var in self.steady_state:
+                    exo_ss_values[var] = float(self.steady_state[var])
+                else:
+                    # Default fallback
+                    exo_ss_values[var] = 1.0 if self.approximation=="log_linear" else 0.0
+        if guess is None:
+            print("No initial guess provided. Using ones as default.")
+            guess = np.ones(n_endogenous_vars)  # Better default than zeros
+            print(guess)
+        else:
+            guess = np.array(guess, dtype=float)
 
-          if len(guess) != n_endogenous_vars:
-              raise ValueError(f"Initial guess must have length {n_endogenous_vars}.")
+            if len(guess) != n_endogenous_vars:
+                raise ValueError(f"Initial guess must have length {n_endogenous_vars}.")
 
       def ss_fun(variables):
           full_vars = []

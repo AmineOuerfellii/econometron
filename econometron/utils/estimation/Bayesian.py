@@ -1,7 +1,7 @@
 
 import numpy as np
 from econometron.filters import kalman_objective
-from econometron.utils.optimizers import rwm
+import econometron.utils.Sampler as sampler
 from econometron.utils.estimation.results import create_results_table
 from typing import List, Tuple, Dict, Callable
 from scipy.stats import gamma, beta as beta_dist
@@ -199,7 +199,7 @@ def rwm_kalman(
     obj_func = lambda params: - kalman_objective(params, fixed_params, param_names, y, update_state_space)
     
     # Run RWM
-    result = rwm(obj_func, prior, x0, lb, ub, n_iter, burn_in, thin, sigma, seed, verbose)
+    result = sampler(obj_func, prior, x0, lb, ub, n_iter, burn_in, thin, sigma, seed, verbose)
     print(result)
     # Validate result
     if not isinstance(result, dict) or 'samples' not in result or 'log_posterior' not in result:

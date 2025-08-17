@@ -255,7 +255,7 @@ class N_beats_Block(nn.Module):
                     nn.init.zeros_(m.bias)
 
     def forward(self, x):
-        print("Input shape:", x.shape)
+        #print("Input shape:", x.shape)
         h_4 = self.FC_stack(x)
         theta_b = self.theta_b(h_4)
         theta_f = self.theta_f(h_4)
@@ -359,8 +359,8 @@ class N_beats(nn.Module):
         total_forecast = torch.zeros(x.shape[0], self.forecast_length, device=x.device)
         for stack in self.stacks:
             stack_forecast, residual = stack(residual)
-            print("stack_forecast shape:", stack_forecast.shape)
-            print("residual shape:", residual.shape)
+            #print("stack_forecast shape:", stack_forecast.shape)
+            #print("residual shape:", residual.shape)
             total_forecast += stack_forecast           
         return total_forecast
     def get_model_info(self):
