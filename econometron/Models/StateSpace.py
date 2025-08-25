@@ -50,6 +50,27 @@ class SS_Model:
         if R.shape[0] != R.shape[1]:
             raise ValueError("State covariance matrix R must be square.")
         self.R = R
+    def define_parameter(self):
+        # Define model parameters
+        pass
+    def _make_state_space_updater(self,base_params: dict,solver: callable,build_R: callable,build_C: callable,derived_fn: callable = None):
+        def update_state_space(params):
+            full_params = base_params.copy()
+            full_params.update(params)
+            # Apply derived parameter logic if provided
+            if derived_fn is not None:
+                derived_fn(full_params)
+            #print(full_params)
+            # Solve the model
+            #print(full_params)
+            F, P = solver(full_params)
+            #print(F,P)
+            R = build_R(full_params)
+            RR = R @ R.T
+            C = build_C(full_params)
+            QQ = C @ C.T
+            return {'A': P, 'D': F, 'Q': QQ, 'R': RR}
+        return update_state_space
     def _validate_entries_(self):
         if self.technique=='Bayesian':
             if self.optimizer is not None:
