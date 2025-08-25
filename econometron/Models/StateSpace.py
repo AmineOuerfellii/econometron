@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from econometron.Models.dynamicsge import linear_dsge
 class SS_Model:
-    def __init__(self,data:Union[np.ndarray, pd.DataFrame,pd.Series], A:np.ndarray, C:np.ndarray, Q:np.ndarray, R:np.ndarray, P:np.ndarray, x0:np.ndarray,model:linear_dsge=None,optimizer:str='L-BFGS-B',estimation_method:str='MLE',constraints:dict=None):
+    def __init__(self,data:Union[np.ndarray, pd.DataFrame,pd.Series],parameters:dict, A:np.ndarray, C:np.ndarray, Q:np.ndarray, R:np.ndarray, P:np.ndarray, x0:np.ndarray,model:linear_dsge=None,optimizer:str='L-BFGS-B',estimation_method:str='MLE',constraints:dict=None):
         """
         Initializes the State Space Model with the given parameters.
 
@@ -22,7 +22,7 @@ class SS_Model:
             self.data = data.values
         else:
             self.data = data
-        
+        self.parameters = parameters 
         self.A = A
         self.C = C
         self.Q = Q
@@ -30,6 +30,8 @@ class SS_Model:
         self.P = P
         self.x0 = x0
         self.model = model
+        self.optimizer = optimizer
+        self.technique=estimation_method
         
     def fit(self):
         # Fit the model to the data
