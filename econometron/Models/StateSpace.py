@@ -7,9 +7,9 @@ class SS_Model:
     def __init__(self,data:Union[np.ndarray, pd.DataFrame,pd.Series],parameters:dict, A:np.ndarray, C:np.ndarray, Q:np.ndarray, R:np.ndarray, P:np.ndarray, x0:np.ndarray,model:linear_dsge=None,optimizer:str='L-BFGS-B',estimation_method:str='MLE',constraints:dict=None):
         """
         Initializes the State Space Model with the given parameters.
-
         Parameters:
         - data (Union[np.ndarray, pd.DataFrame, pd.Series]): The observed data.
+        - parameters (dict): Model parameters.
         - A (np.ndarray): State transition matrix.
         - C (np.ndarray): Observation matrix.
         - Q (np.ndarray): Process noise covariance.
@@ -17,6 +17,9 @@ class SS_Model:
         - P (np.ndarray): Estimate error covariance.
         - x0 (np.ndarray): Initial state estimate.
         - model (econometron.Models.dynamicsge.linear_dsge, optional): The linear DSGE model.
+        - optimizer (str, optional): The optimization algorithm to use.
+        - estimation_method (str, optional): The estimation method to use.
+        - constraints (dict, optional): Constraints for the optimization.
         """
         if isinstance(data, pd.DataFrame) or isinstance(data, pd.Series):
             self.data = data.values
@@ -32,6 +35,7 @@ class SS_Model:
         self.model = model
         self.optimizer = optimizer
         self.technique=estimation_method
+        self.constraints=constraints
         
     def fit(self):
         # Fit the model to the data
