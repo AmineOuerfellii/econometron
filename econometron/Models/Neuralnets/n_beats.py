@@ -356,13 +356,17 @@ class NBEATS(nn.Module):
             # print(total_forecast.shape)
         return total_forecast
 #######################################
-#MAPE LOSS
+# MAPE LOSS
+
+
 class MAPELoss(nn.Module):
     def __init__(self, eps=1e-8):
-      super(MAPELoss, self).__init__()
-      self.eps = eps 
+        super(MAPELoss, self).__init__()
+        self.eps = eps
+
     def forward(self, y_pred, y_true):
-        loss = torch.mean(torch.abs((y_true - y_pred) / (y_true + self.eps))) * 100
+        loss = torch.mean(
+            torch.abs((y_true - y_pred) / (y_true + self.eps))) * 100
         return loss
 #######################################
 # Trainer class
@@ -487,20 +491,26 @@ class Trainer:
         return X_den, Y_den
 
     def _global_normalize(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray, dict]:
-        X = X.detach().cpu().numpy() if isinstance(X, torch.Tensor) else np.asarray(X)
-        y = y.detach().cpu().numpy() if isinstance(y, torch.Tensor) else np.asarray(y)
-        series = self.data
+        if isinstance(X, torch.Tensor):
+            X = X.detach().cpu().numpy()
+        else:
+            X = np.asarray(X)
+        if isinstance(y, torch.Tensor):
+            y = y.detach().cpu().numpy()
+        else:
+            y = np.asarray(y)
+        series = np.asarray(self.data).ravel()
         mu = np.mean(series)
         sigma = np.std(series) + 1e-8
         stats = {"mean": mu, "std": sigma}
         X_norm = (X - mu) / sigma
         y_norm = (y - mu) / sigma
-        return X_norm, y_norm, stats
+        return X_norm.astype(np.float32), y_norm.astype(np.float32), stats
 
     def _global_denormalize(self, predictions: torch.Tensor, stats: dict) -> np.ndarray:
         preds = predictions.detach().cpu().numpy().copy()
-        preds = preds * stats["std"] + stats["mean"]
-        return preds
+        denorm = preds * stats["std"] + stats["mean"]
+        return denorm
 
     def _prepare_data(self, data: Union[np.ndarray, pd.DataFrame, pd.Series], n: int, forecast_len: int, val_split: float = 0.2) -> Tuple[TensorDataset, TensorDataset]:
         data = self._validate_data(data)

@@ -19,14 +19,14 @@ class VAR:
         self.criterion = criterion
         self.forecast_horizon = forecast_horizon
         self.plot = plot
-        if ci_alpha <1 and ci_alpha > 0:
+        if ci_alpha < 1 and ci_alpha > 0:
             self.ci_alpha = ci_alpha
-        else :
-            self.ci_alpha=0.05
+        else:
+            self.ci_alpha = 0.05
             print('ci_alpha must be between 0 and 1 fallback to defaul : 0.05')
         self.check_stationarity = check_stationarity
         self.stationarity_results = {}
-        self.thershold = Threshold if Threshold <1 and Threshold > 0 else 0.8 
+        self.thershold = Threshold if Threshold < 1 and Threshold > 0 else 0.8
         ######
         self.coeff_table = pd.DataFrame()
         ###

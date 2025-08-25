@@ -26,17 +26,41 @@ class SS_Model:
         else:
             self.data = data
         self.parameters = parameters 
-        self.A = A
-        self.C = C
-        self.Q = Q
-        self.R = R
         self.P = P
         self.x0 = x0
         self.model = model
         self.optimizer = optimizer
-        self.technique=estimation_method
-        self.constraints=constraints
+        self.technique = estimation_method
+        self.constraints = constraints
+    def set_transition_mat(self,A:Union[np.ndarray, np.matrix]):
+        if A.shape[0] != A.shape[1]:
+            raise ValueError("Transition matrix A must be square.")
+        self.A = A
+    def set_design_mat(self,C:Union[np.ndarray, np.matrix]):
+        if self.A is None:
+            raise ValueError("Set transition matrix  before setting observation matrix .")
+        if C.shape[1] != self.A.shape[0] or C.shape[0] != self.data.shape[1]:
+            raise ValueError("Observation matrix C dimensions are not compatible with transition matrix  or data.")
+        self.C = C
+    def set_obs_cov(self,Q:Union[np.ndarray, np.matrix]):
+        if Q.shape[0] != Q.shape[1]:
+            raise ValueError("Observation covariance matrix Q must be square.")
+        self.Q = Q
+    def set_state_cov(self,R:Union[np.ndarray, np.matrix]):
+        if R.shape[0] != R.shape[1]:
+            raise ValueError("State covariance matrix R must be square.")
+        self.R = R
+    def _validate_entries_(self):
+        if self.technique=='Bayesian':
+            if self.optimizer is not None:
+                self.optimizer = None
+        if self.constraints and self.optimizer != 'trust-constr' :
+            print("unable to account for constraints")
+        if self.technique == 'MLE':
+            if self.optimizer is None:
+                self.optimizer = 'SA'
         
+
     def fit(self):
         # Fit the model to the data
         pass
