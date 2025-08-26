@@ -11,3 +11,5 @@ __all__ += ['SVAR','VAR','VARMA' ,'VARIMA']
 # Neuralnets
 from econometron.Models.Neuralnets.n_beats import *
 __all__ += ['n_beats']
+from econometron.Models.StateSpace import SS_Model
+__all__ +=['SS_Model']
