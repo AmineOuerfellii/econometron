@@ -130,8 +130,11 @@ class Kalman:
         log_lik = 0
        
         # Initialize
-        x_t = self.X_0
+        
         P_t = self.P_0
+        if P_t[0,0]== 1e6:
+            self.X_0=y[:,0]
+            x_t=self.X_0
         # Core Kalman filter loop
         for t in range(T):
             # print('x',x_t)
@@ -312,7 +315,7 @@ def kalman_smooth(y,full_params,update_state_space,plot=False):
         print(f"Exception: {e}")
         return None
 #####Kalman filter+MLE
-def kalman_objective(params, fixed_params, param_names, y, update_state_space):
+def kalman_objective(params, fixed_params, param_names, y, update_state_space,X0=None,P0=None):
     """
     Objective function for Kalman filter optimization.
 
