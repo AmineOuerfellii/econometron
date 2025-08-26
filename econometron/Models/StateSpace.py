@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class SS_Model:
-    def __init__(self, data: Union[np.ndarray, pd.DataFrame, pd.Series], parameters: dict, P: np.ndarray, x0: np.ndarray, optimizer: str = 'L-BFGS-B', estimation_method: str = 'MLE', constraints: dict = None):
+    def __init__(self, data: Union[np.ndarray, pd.DataFrame, pd.Series], parameters: dict, P: np.ndarray, x0: np.ndarray,model:linear_dsge=None, optimizer: str = 'L-BFGS-B', estimation_method: str = 'MLE', constraints: dict = None):
         """
         Initializes the State Space Model with the given parameters.
         Parameters:
@@ -40,7 +40,7 @@ class SS_Model:
         self.Q = None
         self.D = None
         self.R = None
-
+        self.model=model
     def validate_entries_(self):
         if self.P.shape[0] != self.P.shape[1]:
             raise ValueError("Initial covariance matrix P must be square.")
@@ -145,7 +145,7 @@ class SS_Model:
 
         self.parameters.update(updated_params)
 
-    def _make_state_space_updater(self, base_params: dict, solver: Optional[Callable] = None):
+    def _make_state_space_updater(self, base_params: dict):
         """Create a state-space updater function."""
         def update_state_space(params):
             full_params = base_params.copy()
@@ -154,7 +154,7 @@ class SS_Model:
                 self.define_parameter(self.definition)
                 full_params.update(self.parameters)
             if self.model is not None:
-                D, A = solver(full_params)
+                D, A = self.model.solve_RE_model(full_params)
             else:
                 if any(x is None for x in [self.A, self.C, self.Q, self.R]):
                     raise ValueError(
