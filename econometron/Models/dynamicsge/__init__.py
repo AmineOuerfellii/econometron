@@ -272,37 +272,34 @@ class linear_dsge():
     def compute_ss(self, guess=None, method='fsolve', options=None):
         if options is None:
             options = {}
-        if self.initial_guess:
-            guess = self.initial_guess
-        else:
-            endogenous_vars = [
-                var for var in self.variables if var not in self.exo_states]
-            n_endogenous_vars = len(endogenous_vars)
-            exo_ss_values = {}
-            for var in self.exo_states:
-                if hasattr(self, 'normalize') and var in self.normalize:
-                    # specified override always takes priority
-                    exo_ss_values[var] = float(self.normalize[var])
-                elif self.steady_state is not None and var in self.steady_state:
-                    exo_ss_values[var] = float(self.steady_state[var])
-                else:
-                    # Default fallback
-                    exo_ss_values[var] = 1.0 if self.approximation == "log_linear" else 0.0
-            if guess is None:
-                print("No initial guess provided. Using ones as default.")
-                guess = np.ones(n_endogenous_vars)  # Better default than zeros
-                print(guess)
+        endogenous_vars = [var for var in self.variables if var not in self.exo_states]
+        n_endogenous_vars = len(endogenous_vars)
+        exo_ss_values = {}
+        for var in self.exo_states:
+            if hasattr(self, 'normalize') and var in self.normalize:
+                # specified override always takes priority
+                exo_ss_values[var] = float(self.normalize[var])
+            elif self.steady_state is not None and var in self.steady_state:
+                exo_ss_values[var] = float(self.steady_state[var])
             else:
-                guess = np.array(guess, dtype=float)
+                # Default fallback
+                exo_ss_values[var] = 1.0 if self.approximation == "log_linear" else 0.0
+        if guess is None:
+            if self.initial_guess is not None:
+                guess = self.initial_guess
+            else:
+                guess = np.ones(n_endogenous_vars)
+                print("No initial guess provided. Using ones as default.")
+        else:
+            guess = np.array(guess, dtype=float)
 
-                if len(guess) != n_endogenous_vars:
-                    raise ValueError(
-                        f"Initial guess must have length {n_endogenous_vars}.")
+            if len(guess) != n_endogenous_vars:
+                raise ValueError(
+                    f"Initial guess must have length {n_endogenous_vars}.")
 
         def ss_fun(variables):
             full_vars = []
-            var_dict = {var: val for var, val in zip(
-                endogenous_vars, variables)}
+            var_dict = {var: val for var, val in zip(endogenous_vars, variables)}
             for var in self.variables:
                 if var in endogenous_vars:
                     full_vars.append(var_dict[var])
