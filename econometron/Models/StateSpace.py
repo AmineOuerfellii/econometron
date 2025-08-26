@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class SS_Model:
-    def __init__(self, data: Union[np.ndarray, pd.DataFrame, pd.Series], parameters: dict, P: np.ndarray, x0: np.ndarray,model:linear_dsge=None, optimizer: str = 'L-BFGS-B', estimation_method: str = 'MLE', constraints: dict = None):
+    def __init__(self, data: Union[np.ndarray, pd.DataFrame, pd.Series], parameters: dict,model:linear_dsge=None, optimizer: str = 'L-BFGS-B', estimation_method: str = 'MLE', constraints: dict = None):
         """
         Initializes the State Space Model with the given parameters.
         Parameters:
@@ -31,8 +31,6 @@ class SS_Model:
         else:
             self.data = data
         self.parameters = parameters
-        self.P = P
-        self.x0 = x0
         self.optimizer = optimizer
         self.technique = estimation_method
         self.constraints = constraints
