@@ -15,7 +15,7 @@ def evaluate_func(function, params):
 def simulated_annealing(function,x, lower_bounds, upper_bounds,T, cooling_rate, num_temperatures, num_steps, seed_value, max_evals, eps=1e-2):
     """
     Simulated annealing optimization algorithm.
-
+    
     Parameters:
     -----------
     function : callable
