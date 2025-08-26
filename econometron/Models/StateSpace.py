@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class SS_Model:
-    def __init__(self, data: Union[np.ndarray, pd.DataFrame, pd.Series], parameters: dict,model:linear_dsge=None, optimizer: str = 'L-BFGS-B', estimation_method: str = 'MLE', constraints: dict = None):
+    def __init__(self, data: Union[np.ndarray, pd.DataFrame, pd.Series], parameters: dict, model: linear_dsge = None, optimizer: str = 'L-BFGS-B', estimation_method: str = 'MLE', constraints: dict = None):
         """
         Initializes the State Space Model with the given parameters.
         Parameters:
@@ -38,12 +38,9 @@ class SS_Model:
         self.Q = None
         self.D = None
         self.R = None
-        self.model=model
+        self.model = model
+
     def validate_entries_(self):
-        if self.P.shape[0] != self.P.shape[1]:
-            raise ValueError("Initial covariance matrix P must be square.")
-        if self.x0.shape[0] != self.P.shape[0]:
-            raise ValueError("Initial state x0 must match P dimensions.")
         if self.model is None and (self.A is None or self.C is None or self.Q is None or self.R is None):
             raise ValueError(
                 "Model OR transition matrix A, observation matrix C, Q, and R must be defined.")
@@ -75,10 +72,10 @@ class SS_Model:
 
     def set_state_cov(self, Q: Union[np.ndarray, np.matrix], params: Optional[dict] = None):
         """Set the observation noise covariance matrix Q, optionally using parameters."""
-        if self.A is None:
-            raise ValueError(
-                "Set transition matrix before setting observation matrix.")
+        if self.model is None and self.A is None:
+            raise ValueError("Set transition matrix before setting observation matrix.")
         Q = np.asarray(Q)
+        
         if Q.shape[0] != Q.shape[1] and Q.shape[0] != self.A.shape[0]:
             raise ValueError("Observation covariance matrix Q must be square.")
         if not np.all(np.linalg.eigvals(Q) >= 0):
@@ -94,13 +91,14 @@ class SS_Model:
         if R.shape[0] != R.shape[1] and R.shape[0] != self.D.shape[0]:
             raise ValueError("State covariance matrix R must be square.")
         if not np.all(np.linalg.eigvals(R) >= 0):
-            logger.info("State covariance matrix R must be positive semi-definite.")
+            logger.info(
+                "State covariance matrix R must be positive semi-definite.")
         self.R = R
         return self.R
 
     def set_Design_mat(self, D: Union[np.ndarray, np.matrix]):
         """Set the control matrix D, optionally using parameters."""
-        if self.A is None:
+        if self.A is None and self.model is None:
             raise ValueError(
                 "Set transition matrix before setting observation matrix.")
         D = np.asarray(D)
@@ -119,7 +117,8 @@ class SS_Model:
         self._derived_params = set()
         for param in definition:
             if param not in self.parameters:
-                raise ValueError(f"Derived parameter {param} not in initial parameters {self.parameters.keys()}.")
+                raise ValueError(
+                    f"Derived parameter {param} not in initial parameters {self.parameters.keys()}.")
         for param, expr in definition.items():
             try:
                 tree = ast.parse(expr, mode='eval')
@@ -127,7 +126,8 @@ class SS_Model:
                     tree) if isinstance(node, ast.Name)}
                 for p in param_names:
                     if p not in self.parameters:
-                        raise ValueError(f"Parameter {p} in expression for {param} not in initial parameters {self.parameters.keys()}.")
+                        raise ValueError(
+                            f"Parameter {p} in expression for {param} not in initial parameters {self.parameters.keys()}.")
             except SyntaxError:
                 raise ValueError(f"Invalid expression for {param}: {expr}")
         updated_params = self.parameters.copy()
@@ -161,9 +161,9 @@ class SS_Model:
                 D = self.D if self.D is not None else np.zeros(
                     (self.x0.shape[0], 1))
             R = self.R
-            C = self.C
-            RR = R
-            QQ = C
+            Q = self.Q
+            RR = R@R.T
+            QQ = Q@Q.T
             return {'A': A, 'D': D, 'Q': QQ, 'R': RR}
         return update_state_space
 
@@ -215,7 +215,8 @@ class SS_Model:
             if not isinstance(dist_params, dict):
                 raise ValueError(
                     f"Distribution parameters for {param} must be a dictionary.")
-        bounds_dict = {param: bound for param,bound in zip(param_names, bounds)}
+        bounds_dict = {param: bound for param,
+                       bound in zip(param_names, bounds)}
         for param, (lb, ub) in bounds_dict.items():
             if not isinstance(lb, (int, float)) or not (isinstance(ub, (int, float)) or ub == float('inf')):
                 raise ValueError(
@@ -227,8 +228,11 @@ class SS_Model:
             param_names=param_names, priors=priors, bounds=bounds, verbose=True)
         self.prior_fn = prior
         return prior
+
     def calibrate_params(self, fixed_params: set):
-        self.fixed_params = {param: self.parameters[param]for param in fixed_params if param in self.parameters}
+        self.fixed_params = {
+            param: self.parameters[param]for param in fixed_params if param in self.parameters}
+
     def fit(self, Lower_bound: list, Upper_bound: list, prior_specs: dict = None, seed: int = 1, T0: float = 5, rt: float = 0.9, nt: int = 2, ns: int = 2,
             pop_size: int = 50, n_gen: int = 100, crossover_rate: float = 0.8, mutation_rate: float = 0.1, elite_frac: float = 0.1, stand_div: list = None,
             verbose: bool = True, tol: float = 1e-6, n_iter: int = 10000, burn_in: int = 100, thin: int = 10):
@@ -236,12 +240,12 @@ class SS_Model:
         s_e_e_d = seed if seed > 0 else 42
         prior_specs = prior_specs or {}
         initial_params = self._initial_parameters
-        param_names = [k for k in initial_params.keys()if k not in self._derived_params.keys() and k not in self.fixed_params.keys()]
+        param_names = [k for k in initial_params.keys(
+        )if k not in self._derived_params.keys() and k not in self.fixed_params.keys()]
         initial_params = [initial_params[name] for name in param_names]
         self._validate_entries_()
         if self.validated_entries_:
-            update_state_space = self._make_state_space_updater(
-                self.fixed_params, self.model.build_A, self.model.build_D, self.model.build_R, self.model.build_C, self.model.solve)
+            update_state_space = self._make_state_space_updater(self.parameters, self.model.build_A, self.model.build_D, self.model.build_R, self.model.build_C, self.model.solve)
         bounds_set = [(lb, ub) for lb, ub in zip(Lower_bound, Upper_bound)]
         match self.technique:
             case 'MLE':
@@ -254,8 +258,10 @@ class SS_Model:
                                                            n_gen=n_gen, crossover_rate=crossover_rate, mutation_rate=mutation_rate, elite_frac=elite_frac, seed=s_e_e_d, verbose=verbose)
                     elif self.optimizer.lower() in ['trust_constr', 'bfgs', 'powell']:
                         try:
-                            def obj_func(params): return kalman_objective(params, self.fixed_params, param_names, self.data, update_state_space)
-                            results = minimize(obj_func, initial_params, method=self.optimizer, bounds=bounds_set)
+                            def obj_func(params): return kalman_objective(
+                                params, self.fixed_params, param_names, self.data, update_state_space)
+                            results = minimize(
+                                obj_func, initial_params, method=self.optimizer, bounds=bounds_set)
                         except Exception as e:
                             error_result = {
                                 'x': None, 'fun': None, 'nfev': None, 'message': f'GA Kalman failed: {str(e)}'}
