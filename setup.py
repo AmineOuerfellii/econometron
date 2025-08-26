@@ -21,7 +21,6 @@ if __name__ == "__main__":
             "sympy>=1.13.0",
             "torch>=1.13.1",
             "scikit-learn>=1.0.2",
-            "colorama"
         ],
         classifiers=[
             "Development Status :: 3 - Beta",

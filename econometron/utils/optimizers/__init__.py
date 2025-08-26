@@ -1,5 +1,4 @@
 from numpy.random import uniform, rand, seed
-from colorama import Fore, Style  # Assuming these are imported for colored output
 import numpy as np
 from scipy.stats import norm
 import numpy.random as npr
