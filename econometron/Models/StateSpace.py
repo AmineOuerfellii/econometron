@@ -182,10 +182,9 @@ class SS_Model:
         def update_state_space(params):
             full_params = base_params.copy()
             full_params.update(params)
-            # Apply derived parameter logic if definition is provided
             if hasattr(self, 'definition') and self.definition:
                 self.define_parameter(self.definition)
-                full_params.update(self._derived_params)  # Update with derived parameters
+                full_params.update(self._derived_params) 
             if self.model is not None:
                 D, A = self.model.solve_RE_model(full_params)
             else:
@@ -194,11 +193,9 @@ class SS_Model:
                 A = self.A(full_params) if isinstance(self.A, Callable) else self.A
                 D = self.D(full_params) if isinstance(self.D, Callable) else (self.D if self.D is not None else np.zeros((self.x0.shape[0], 1)))
 
-            # Compute R and Q
             R = self.R(full_params) if isinstance(self.R, Callable) else self.R
             Q = self.Q(full_params) if isinstance(self.Q, Callable) else self.Q
 
-            # Validate matrices
             if not np.all(np.isfinite(A)) or not np.all(np.isfinite(D)) or not np.all(np.isfinite(R)) or not np.all(np.isfinite(Q)):
                 raise ValueError("Computed A, D, R, or Q contains non-numeric or infinite values.")
             if not np.all(np.linalg.eigvals(R @ R.T) >= 0):
