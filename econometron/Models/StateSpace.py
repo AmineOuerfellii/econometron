@@ -1,4 +1,4 @@
-from typing import Union, Callable, Dict, List, Optional
+from typing import Union, Dict, List, Optional
 import pandas as pd
 import numpy as np
 from econometron.Models.dynamicsge import linear_dsge
