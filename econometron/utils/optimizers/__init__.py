@@ -91,6 +91,8 @@ def simulated_annealing(function,x, lower_bounds, upper_bounds,T, cooling_rate, 
                         lnobds=lnobds+1
                         sa_nobds=sa_nobds+1
                     fp=evaluate_func(function,xp)
+                    print('current param vector',xp)
+                    print('current function',fp)
                     sa_nevals=sa_nevals+1
                     if fp<=f:
                         x=xp
@@ -123,8 +125,6 @@ def simulated_annealing(function,x, lower_bounds, upper_bounds,T, cooling_rate, 
                     VM[i]=VM[i]/(1+c[i]*((0.4-ratio)/0.4))
                 if VM[i]>(UB[i]-LB[i]):
                     VM[i]=UB[i]-LB[i]
-            print('xop',xopt)
-            print('fop',fopt)
             for i in range(sa_nargs):
                 nacp[i] = 0
         fstar[0]=f

@@ -132,15 +132,17 @@ class Kalman:
         # Initialize
         
         P_t = self.P_0
+        
         if P_t[0,0]== 1e6:
             self.X_0=y[:,0]
             x_t=self.X_0
+        else:
+            x_t = self.X_0
         # Core Kalman filter loop
         for t in range(T):
             # print('x',x_t)
             # print('p',P_t)
             Ztilde = y[:, [t]] - self.D @ x_t
-            #print(Ztilde)
             # Update
             Omega = self.D @ P_t@ self.D.T + self.R
             #print('t',Omega)
@@ -315,7 +317,7 @@ def kalman_smooth(y,full_params,update_state_space,plot=False):
         print(f"Exception: {e}")
         return None
 #####Kalman filter+MLE
-def kalman_objective(params, fixed_params, param_names, y, update_state_space,X0=None,P0=None):
+def kalman_objective(params, fixed_params, param_names, y, update_state_space):
     """
     Objective function for Kalman filter optimization.
 
@@ -345,9 +347,11 @@ def kalman_objective(params, fixed_params, param_names, y, update_state_space,X0
     try:
         ss_params = update_state_space(full_params)
         #print(ss_params)
+        
         kalman = Kalman(ss_params)
         result = kalman.filter(y)
         log_lik = result['log_lik']
+        print('loglik',log_lik)
         return log_lik
     except Exception as e:
         print("Error in kalman_objective:")
