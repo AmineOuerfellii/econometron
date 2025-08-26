@@ -373,7 +373,7 @@ class MAPELoss(nn.Module):
 ######################################
 
 
-class Trainer:
+class Trainer_ts:
     def __init__(self, model, normalization_type: str = None, device: str = None, Seed: int = 42):
         if not isinstance(model, nn.Module):
             raise ValueError("Model must be a PyTorch nn.Module instance")
