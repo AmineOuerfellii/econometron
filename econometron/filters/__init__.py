@@ -2,7 +2,7 @@ import numpy as np
 from scipy.linalg import inv, solve_discrete_lyapunov, eigvals
 import scipy.linalg as sp
 import warnings
-
+import matplotlib.pyplot as plt
 __all__ = ['Kalman','kalman_objective', 'kalman_smooth']
 
 ########################
@@ -23,17 +23,13 @@ class Kalman:
     """
     def __init__(self, params):
         """Initialize the Kalman filter with model parameters."""
-        # Convert inputs to numpy arrays
         self.A = np.array(params['A'])
         self.D = np.array(params['D'])
         self.Q = np.array(params['Q'])
         self.R = np.array(params['R'])
-
-        # Dimensions
         self.n = self.A.shape[0]  # State dimension
         self.m = self.D.shape[0]  # Observation dimension
 
-        # Validate shapes
         if self.A.shape != (self.n, self.n):
             raise ValueError("A must be square (n x n).")
         if self.Q.shape != (self.n, self.n):
@@ -55,12 +51,9 @@ class Kalman:
         # if np.any(eigvals(self.R) < -1e-10):
         #     raise ValueError("R must be positive definite.")
 
-        # Initial state
         self.X_0 = np.array(params.get('x0', np.zeros((self.n, 1))))
         if self.X_0.shape != (self.n, 1):
             raise ValueError("x0 must be a column vector (n x 1).")
-
-        # Initial covariance
         self.P_0 = self._compute_initial_covariance(params.get('P0'))
 
     def _compute_initial_covariance(self, P0):
@@ -86,19 +79,17 @@ class Kalman:
             if np.any(eigvals(P0) < -1e-10):
                 raise ValueError("P0 must be positive semi-definite.")
             return P0
-
-        # Check stationarity
         eigenvalues = eigvals(self.A)
         if np.any(np.abs(eigenvalues) >= 1):
-            return np.eye(self.n) * 1e6  # Large covariance for non-stationary system
+            return np.eye(self.n) * 1e4 
         # Solve P0 = A P0 A^T + Q
         try:
             P0 = solve_discrete_lyapunov(self.A, self.Q)
             if not np.allclose(P0, P0.T):
-                P0 = (P0 + P0.T) / 2  # Ensure symmetry
+                P0 = (P0 + P0.T) / 2 
             return P0
         except np.linalg.LinAlgError:
-            return np.eye(self.n) * 1e6
+            return np.eye(self.n) * 1e4
 
     def filter(self, y):
         """
@@ -128,30 +119,24 @@ class Kalman:
         P_tt1 = np.zeros((self.n, self.n, T))
         residuals = np.zeros((self.m, T))
         log_lik = 0
-       
-        # Initialize
-        
         P_t = self.P_0
-        
-        if P_t[0,0]== 1e6:
-            self.X_0=y[:,0]
-            x_t=self.X_0
+        if P_t[0,0]== 1000:
+           x_t=y[:,0]    
         else:
+            print('oo')
             x_t = self.X_0
-        # Core Kalman filter loop
         for t in range(T):
             # print('x',x_t)
             # print('p',P_t)
-            Ztilde = y[:, [t]] - self.D @ x_t
+            Ztilde = y[:,[t]] - self.D @ x_t
             # Update
             Omega = self.D @ P_t@ self.D.T + self.R
             #print('t',Omega)
             # Check for NaNs/Infs in Omiga
             if np.any(np.isnan(Omega)) or np.any(np.isinf(Omega)):
                 warnings.warn(f"NaN/Inf detected in innovation covariance Omega at time step {t}.", stacklevel=2)
-                # Assign a large penalty and break or skip
                 log_lik = -9e+20
-                break # Exit the loop
+                break 
             try:
               Omegainv = np.linalg.inv(Omega)
             except np.linalg.LinAlgError:
@@ -164,11 +149,9 @@ class Kalman:
             P_t= self.A@ ( P_t - P_t @ self.D.conj().T @ Omegainv @ self.D @ P_t) @ self.A.conj().T + self.Q
             P_tt[:, :, t] = P_t
             residuals[:, t] = Ztilde.T @ inv(sp.sqrtm(Omega))
-            # Log-likelihood contribution
             log_lik -= 0.5 * (np.log(np.linalg.det(Omega)) + Ztilde.conj().T @ Omegainv @ Ztilde)
         if isinstance(log_lik, (list, np.ndarray)):
             log_lik = np.mean(log_lik)
-        # Handle log-likelihood
         if log_lik.imag != 0:
             log_lik = -9e+20
         else:
@@ -203,23 +186,17 @@ class Kalman:
         T = y.shape[1]
         dimX = self.n
         dimZ = self.m
-
-        # Initial state covariance
         CC = self.Q
         if np.max(np.abs(np.linalg.eigvals(self.A))) >= 1:
             P0 = CC * 1000
         else:
             P0 = np.linalg.solve(np.eye(dimX**2) - np.kron(self.A, self.A), CC.flatten()).reshape(dimX, dimX)
-
         # Init
         Xhat = np.zeros((dimX, T + 1))
         PP0 = np.zeros((dimX, dimX, T))
         PP1 = np.zeros((dimX, dimX, T))
         residuals = np.zeros((dimZ, T))
-
         D = self.D
-
-        # Forward recursion
         for t in range(T):
             Ztilde = y[:, t] - D @ self.A @ Xhat[:, t]
             Omega = D @ self.A @ P0 @ (D @ self.A).T + D @ self.Q @ D.T + self.R
@@ -231,13 +208,9 @@ class Kalman:
             PP0[:, :, t] = P0
             PP1[:, :, t] = self.A @ P0 @ self.A.T + self.Q
             residuals[:, t] = Ztilde
-
-        # Prediction for smoother
         Xtilde = self.A @ Xhat[:, :-1]
         Xsm = np.zeros_like(Xhat)
         Xsm[:, T] = Xhat[:, T]
-
-        # Backward recursion
         for t in range(T - 1, -1, -1):
             J = PP0[:, :, t] @ self.A.T @ np.linalg.inv(PP1[:, :, t] + np.eye(dimX) * 1e-8)
             Xsm[:, t] = Xhat[:, t] + J @ (Xsm[:, t + 1] - Xtilde[:, t])
@@ -253,69 +226,73 @@ class Kalman:
         }
 ##########################
 ##Kalman Smoother
-def kalman_smooth(y,full_params,update_state_space,plot=False):
+def kalman_smooth(y, full_params, update_state_space, plot=False):
     """
-    Objective function for Kalman filter optimization.
+    Run Kalman smoother and optionally plot observations, predictions, and smoothed states.
 
     Parameters:
     -----------
-    params : ndarray
-        Parameters to optimize.
-    fixed_params : dict
-        Fixed parameters and their values.
-    param_names : list
-        Names of parameters to optimize.
     y : ndarray
         Observations (m x T).
+    full_params : dict
+        Full parameter dictionary.
     update_state_space : callable
-        Function to update state-space matrices given parameters.
+        Function to update state-space matrices.
+    plot : bool
+        Whether to generate plots (default: False).
 
     Returns:
     --------
-    float
-        smoothed state.
+    dict
+        Smoothed state and predictions.
     """
     print("Running Kalman smoother...")
-    # Update state-space matrices
     ss_params = update_state_space(full_params)
-    # Run Kalman filter
+    D,R= ss_params['D'],ss_params['R']
+    predictions=np.zeros_like(y)
     try:
         kalman = Kalman(ss_params)
         result = kalman.smooth(y)
         smooth_state = result['Xsm']
-        print(smooth_state.shape)
+        residuals=result['residuals']
+        predictions=y-residuals
+        print(f"Smoothed state shape: {smooth_state.shape}, Predictions shape: {predictions.shape}")
+        
         if plot:
             T = y.shape[1]
-            time = np.arange(T) 
-            import matplotlib.pyplot as plt
-            # Create two subplots
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+            time = np.arange(T)
+            n_vars = y.shape[0]
+            n_states = smooth_state.shape[0]
             
-            # Plot 1: Observations and smoothed state together
-            ax1.plot(time, y[0, :], label='Observations (y)', color='blue', alpha=0.6)
-            ax1.plot(time, smooth_state[0, :], label='Smoothed State (Xsm)', color='red', linestyle='--')
-            ax1.set_xlabel('Time')
-            ax1.set_ylabel('Value')
-            ax1.set_title('Observations and Smoothed State')
-            ax1.legend()
-            ax1.grid(True, alpha=0.3)
+            # Plot smoothed states (one figure per state)
+            for i in range(n_states):
+                fig = plt.figure(figsize=(8, 4))
+                plt.plot(time, smooth_state[i, :], label=f'Smoothed State {i+1}', color='red')
+                plt.xlabel('Time')
+                plt.ylabel(f'State {i+1}')
+                plt.title(f'Smoothed State {i+1}')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.show()
             
-            # Plot 2: Smoothed state alone
-            ax2.plot(time, smooth_state[0, :], label='Smoothed State (Xsm)', color='red')
-            ax2.set_xlabel('Time')
-            ax2.set_ylabel('Smoothed State')
-            ax2.set_title('Smoothed State Alone')
-            ax2.legend()
-            ax2.grid(True, alpha=0.3)
-            
-            plt.tight_layout()
-            plt.show()
-
-        return smooth_state
+            # Plot predicted vs actual for observables (one figure per variable)
+            for i in range(n_vars):
+                fig = plt.figure(figsize=(8, 4))
+                plt.plot(time, y[i, :], label='Observations', color='blue', alpha=0.6)
+                plt.plot(time, predictions[i, :], label='Predictions', color='green', linestyle='-.')
+                plt.xlabel('Time')
+                plt.ylabel(f'Variable {i+1}')
+                plt.title(f'Predicted vs Actual for Variable {i+1}')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.tight_layout()
+                plt.show()
+        
+        return {'smoothed_state': smooth_state, 'predictions': predictions, 'residuals': residuals}   
     except Exception as e:
-        print("Error in kalman_smooth:")
-        print(f"Exception: {e}")
-        return None
+        print(f"Error in Kalman smoother: {str(e)}")
+        return {'smoothed_state': None, 'predictions': None}
 #####Kalman filter+MLE
 def kalman_objective(params, fixed_params, param_names, y, update_state_space):
     """
@@ -339,15 +316,12 @@ def kalman_objective(params, fixed_params, param_names, y, update_state_space):
     float
         Negative log-likelihood.
     """
-    # Combine optimized and fixed/calibrated parameters
     full_params = fixed_params.copy()
     for name, value in zip(param_names, params):
         full_params[name] = value
-    # run Kalman filter
     try:
         ss_params = update_state_space(full_params)
-        #print(ss_params)
-        
+        print(ss_params)      
         kalman = Kalman(ss_params)
         result = kalman.filter(y)
         log_lik = result['log_lik']

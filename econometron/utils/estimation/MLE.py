@@ -45,11 +45,7 @@ def genetic_algorithm_kalman(
                                   mutation_rate, elite_frac, seed, verbose)
         if verbose:
             print(f"GA result: {result}")
-        table = create_results_table(result, param_names, -result['fun'] if result['fun'] is not None else np.nan, 
-                                    obj_func, 'Genetic Algorithm')
-        if verbose:
-            print(f"Results table: {table}")
-        return {'result': result, 'table': table}
+        return result
     except Exception as e:
         error_result = {
             'x': None,
@@ -88,5 +84,4 @@ def simulated_annealing_kalman(
     print(f"Starting Simulated Annealing with params: T0: {T0}, rt: {rt}, nt: {nt}, ns: {ns}, seed: {seed}")
     obj_func = lambda params:kalman_objective(params, fixed_params, param_names, y, update_state_space)
     result = simulated_annealing(obj_func, x0, lb, ub, T0, rt, nt, ns, seed,max_evals,eps)
-    table = create_results_table(result, param_names, -result['fun'] if result['fun'] is not None else np.nan, obj_func, 'Simulated Annealing')
-    return {'result': result , 'table': table}
+    return result

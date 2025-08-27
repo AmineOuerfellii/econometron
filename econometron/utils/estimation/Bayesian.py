@@ -200,15 +200,10 @@ def rwm_kalman(
     
     # Run RWM
     result = sampler(obj_func, prior, x0, lb, ub, n_iter, burn_in, thin, sigma, seed, verbose)
-    print(result)
     # Validate result
     if not isinstance(result, dict) or 'samples' not in result or 'log_posterior' not in result:
         raise ValueError(f"Invalid result from rwm: {result}")
-    # Create table
-    table = create_results_table(result, param_names, log_lik=np.mean(result['log_posterior']), obj_func=obj_func, method='RWM', prior_func=prior)
-    print('table', table)
     if verbose:
         print(f"Final RWM result: {result}")
-        print(f"Results table: {table}")
 
-    return {'result': result, 'table': table}
+    return result

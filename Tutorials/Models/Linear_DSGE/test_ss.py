@@ -98,6 +98,24 @@ Keynes_ss.set_obs_cov(R_mat)
 Keynes_ss.calibrate_params(calibrated_params)
 Keynes_ss.define_parameter(defined_params)
 update_ss=Keynes_ss._make_state_space_updater(base_params=model_full_params)
-LB= [0,0,1,0,0,0,0,0]
-UB= [10,1,5,1,1,1,1,1]
-Keynes_ss.fit(Lower_bound=LB,Upper_bound=UB)
+param={'g': 7.372995153121833,
+ 'beta': 0.96,
+ 'kappa': 0.8,
+ 'rho': 0.9877384102847888,
+ 'phi': 3.402829610145752,
+ 'd': 0.003082995908878812,
+ 'sigmax': 0.006405250449062197,
+ 'sigma_y': 0.10709796645551589,
+ 'sigma_p': 0.004041130660498564,
+ 'sigma_r': 0.999999142653202}
+print(param['sigmax']**2)
+update_ss=Keynes_ss._make_state_space_updater(base_params=param)
+print(update_ss(params=param))
+
+ll=kalman_objective(param.values(),{},param.keys(),trans_data,update_ss)
+# LB= [0,0,1,0,0,0,0,0]
+# UB= [10,1,5,1,1,1,1,1]
+# Keynes_ss.fit(Lower_bound=LB,Upper_bound=UB,)
+# print(Keynes_ss.result)
+# Keynes_ss.summary()
+
