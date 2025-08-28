@@ -1,10 +1,10 @@
 
 import numpy as np
 from econometron.filters import kalman_objective
-import econometron.utils.Sampler as sampler
+from econometron.utils.Sampler import rwm as sampler
 from econometron.utils.estimation.results import create_results_table
 from typing import List, Tuple, Dict, Callable
-from scipy.stats import gamma, beta as beta_dist
+import scipy.stats
 
 ### Compute proposal sigma
 def compute_proposal_sigma(n_params, lb, ub, base_std=0.1):

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class VAR:
-    def __init__(self, data, max_p=2, columns=None, criterion='AIC', forecast_horizon=10, plot=True, bootstrap_n=1000, ci_alpha=0.05, orth=False, check_stationarity=True, Key=None, Threshold=0.8):
+    def __init__(self, data, max_p=2, columns=None, criterion='AIC', forecast_horizon=10, plot=True, bootstrap_n=1000, ci_alpha=0.05, orth=False, check_stationarity=True, Key=None, Threshold=0.8 ,verbose=False):
         self.data = data
         self.max_p = max_p
         self.criterion = criterion
@@ -36,7 +36,7 @@ class VAR:
         self.best_criterion_value = None
         self.all_results = []
         self.roots = []
-        self._validate_the_data(data)
+        self._validate_the_data(data,verbose=verbose)
         if Key == "EL_RAPIDO":
             print("="*30, "Fitting the model", "="*30)
             self.fit(columns)
@@ -141,7 +141,7 @@ class VAR:
             logger.warning(f"KPSS test failed: {e}")
             return {'P_value': 1.0, 'statistic': np.nan, 'critical_values': {}}
 
-    def _validate_the_data(self, data):
+    def _validate_the_data(self, data ,verbose:bool=False):
         # Data type check
         if isinstance(data, pd.DataFrame) or isinstance(data, pd.Series):
             if isinstance(data, pd.Series):
@@ -157,7 +157,8 @@ class VAR:
             raise ValueError("Columns is entirely or contains NaN values")
         # ==================Stationarity validation====================#
         if self.check_stationarity:
-            print("Performing stationarity checks...")
+            if verbose:
+                print("Performing stationarity checks...")
             for col in self.data.columns:
                 series = self.data[col]
                 adf_result = self._adf_test(series)
@@ -165,13 +166,16 @@ class VAR:
                 self.stationarity_results[col] = {
                     'adf': adf_result, 'kpss': kpss_result}
             for col in self.stationarity_results:
-                print(f"\nColumn: {col}")
+                if verbose:
+                    print(f"\nColumn: {col}")
                 verdict = True
                 if self.stationarity_results[col]['adf']['P_value'] > 0.05 and self.stationarity_results[col]['kpss']['P_value'] < 0.05:
                     verdict = False
-                    print(f"Verdict , The serie : {col} is not stationary")
+                    if verbose:
+                        print(f"Verdict , The serie : {col} is not stationary")
                 else:
-                    print(f"Verdict , The serie : {col} is stationary")
+                    if verbose:
+                        print(f"Verdict , The serie : {col} is stationary")
                 self.stationarity_results[col] = verdict
                 if np.all(list(self.stationarity_results.values())):
                     self.data = data
@@ -975,3 +979,4 @@ class VAR:
                 plt.tight_layout()
                 plt.show()
         return {'irf': irf, 'ci_lower': ci_lower, 'ci_upper': ci_upper}
+####Adding granger causality test or leavind it foe users ' nu we need full work 

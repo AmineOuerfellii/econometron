@@ -3,6 +3,11 @@ import numpy as np
 from scipy.stats import norm
 import numpy.random as npr
 from econometron.utils.solver import Root
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 ####################################################### Evaluation Function ##################################################
 __all__ = ['evaluate_func','genetic_algorithm','simulated_annealing','rwm','minimize_qn']
 
@@ -91,8 +96,6 @@ def simulated_annealing(function,x, lower_bounds, upper_bounds,T, cooling_rate, 
                         lnobds=lnobds+1
                         sa_nobds=sa_nobds+1
                     fp=evaluate_func(function,xp)
-                    print('current param vector',xp)
-                    print('current function',fp)
                     sa_nevals=sa_nevals+1
                     if fp<=f:
                         x=xp
@@ -103,6 +106,8 @@ def simulated_annealing(function,x, lower_bounds, upper_bounds,T, cooling_rate, 
                         if fp<fopt:
                             xopt=xp
                             fopt=fp
+                            logger.info(f'Current Optimal value of objective Function {fopt} \n')
+                            logger.info(f'Current Optimal vector of parameters {xopt} \n')
                             sa_opteval=sa_nevals
                             nnew=nnew+1
                     else:

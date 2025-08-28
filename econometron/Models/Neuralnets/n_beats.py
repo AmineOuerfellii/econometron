@@ -1205,3 +1205,164 @@ class Trainer_ts:
                 logger.error(f"Error creating forecast plots: {e}")
         logger.info("="*50)
         return predictions_np, stack_contributions
+
+    def forecast_out_of_sample(self, steps: int, plot: bool = True, figsize: tuple = (15, 8)) -> np.ndarray:
+        """
+        Generate out-of-sample forecasts for a specified number of steps.
+
+        Args:
+            steps: Number of future time steps to forecast
+            plot: Whether to plot the results
+            figsize: Figure size for plotting
+
+        Returns:
+            forecasts: Numpy array of forecasted values
+        """
+        logger.info("="*50)
+        logger.info("OUT-OF-SAMPLE FORECASTING")
+        logger.info("="*50)
+
+        # Validate prerequisites
+        if self.data is None:
+            raise ValueError(
+                "No data found. Please run fit() first to set the training data.")
+
+        if not hasattr(self.model, 'backcast_length') or not hasattr(self.model, 'forecast_length'):
+            raise ValueError(
+                "Model must have backcast_length and forecast_length attributes")
+        backcast_len = self.model.backcast_length
+        horizon = self.model.forecast_length
+
+        if len(self.data) < backcast_len:
+            raise ValueError(
+                f"Data length ({len(self.data)}) must be at least backcast_length ({backcast_len})")
+
+        if steps <= 0:
+            raise ValueError("Steps must be positive")
+
+        logger.info(
+            f"Forecasting {steps} steps ahead using backcast length: {backcast_len}")
+        logger.info(
+            f"Model horizon: {horizon}, Normalization: {self.normalization_type}")
+
+        data = self.data.copy().astype(np.float32)
+        forecasts = []
+        current_window = data[-backcast_len:].copy()
+
+        self.model.eval()
+        torch.manual_seed(self.seed)
+        if self.device == 'cuda':
+            torch.cuda.manual_seed(self.seed)
+
+        with torch.no_grad():
+            steps_completed = 0
+            iteration = 0
+
+            while steps_completed < steps:
+                iteration += 1
+                remaining_steps = steps - steps_completed
+                current_horizon = min(horizon, remaining_steps)
+
+                logger.info(
+                    f"Iteration {iteration}: Forecasting {current_horizon} steps")
+
+                try:
+                    X_input = current_window.reshape(1, -1)
+                    X_tensor = torch.from_numpy(
+                        X_input).float().to(self.device)
+                    if self.normalization_type == 'revin':
+                        self.model.n_features = backcast_len
+                        pred_tensor = self.model( X_tensor, mode='norm', cas='fore')
+                        pred = pred_tensor.cpu().numpy().flatten()
+                    elif self.normalization_type == 'local':
+                        mean_X = current_window.mean()
+                        std_X = current_window.std() + 1e-8
+                        X_norm = (X_input - mean_X) / std_X
+                        X_norm_tensor = torch.from_numpy(
+                            X_norm.astype(np.float32)).float().to(self.device)
+                        pred_tensor = self.model(X_norm_tensor)
+                        pred_norm = pred_tensor.cpu().numpy().flatten()
+                        pred = pred_norm * std_X + mean_X
+
+                    elif self.normalization_type == 'global':
+                        if self.stats_train is None:
+                            raise ValueError(
+                                "No training statistics found for global normalization")
+
+                        X_norm = (
+                            X_input - self.stats_train["mean"]) / self.stats_train["std"]
+                        X_norm_tensor = torch.from_numpy(
+                            X_norm.astype(np.float32)).float().to(self.device)
+
+                        pred_tensor = self.model(X_norm_tensor)
+                        pred_denorm = self._global_denormalize(
+                            pred_tensor, self.stats_train)
+                        pred = pred_denorm.flatten()
+
+                    else:
+                        pred_tensor = self.model(X_tensor)
+                        pred = pred_tensor.cpu().numpy().flatten()
+                    if np.isnan(pred).any() or np.isinf(pred).any():
+                        logger.warning(
+                            f"Invalid predictions at iteration {iteration}. Stopping forecast.")
+                        break
+                    pred_steps = pred[:current_horizon]
+                    forecasts.extend(pred_steps)
+                    steps_completed += len(pred_steps)
+                    if steps_completed < steps:
+                        slide_amount = min(len(pred_steps), backcast_len)
+                        if slide_amount >= backcast_len:
+                            current_window = pred_steps[-backcast_len:]
+                        else:
+                            current_window = np.concatenate([
+                                current_window[slide_amount:],
+                                pred_steps
+                            ])
+
+                except Exception as e:
+                    logger.error(
+                        f"Error during forecasting iteration {iteration}: {e}")
+                    break
+
+        forecasts = np.array(forecasts[:steps], dtype=np.float32)
+
+        logger.info(f"Successfully generated {len(forecasts)} forecast points")
+        if plot:
+            try:
+                plt.figure(figsize=figsize)
+                historical_indices = np.arange(len(data))
+                forecast_indices = np.arange(
+                    len(data), len(data) + len(forecasts))
+                plt.plot(historical_indices, data,
+                         label='Historical Data', color='#2ca02c', linewidth=2)
+                if len(forecasts) > 0:
+                    plt.plot(forecast_indices, forecasts,
+                             label=f'{len(forecasts)}-Step Forecast',
+                             color='#d62728', linewidth=2, linestyle='--')
+                    plt.plot([len(data)-1, len(data)],
+                             [data[-1], forecasts[0]],
+                             color='#d62728', linewidth=2, linestyle='--', alpha=0.7)
+                    if len(data) > 20:
+                        recent_volatility = np.std(data[-20:])
+                        upper_bound = forecasts + 1.96 * recent_volatility
+                        lower_bound = forecasts - 1.96 * recent_volatility
+
+                        plt.fill_between(forecast_indices, lower_bound, upper_bound,
+                                         alpha=0.2, color='#d62728',
+                                         label='95% Confidence Interval (approx.)')
+
+                plt.xlabel('Time Step')
+                plt.ylabel('Value')
+                plt.title(
+                    f'{self.model.__class__.__name__} - Out-of-Sample Forecast ({len(forecasts)} steps)')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.axvline(x=len(data)-0.5, color='gray',linestyle=':', alpha=0.7)
+                plt.tight_layout()
+                plt.show()
+
+            except Exception as e:
+                logger.error(f"Error creating forecast plot: {e}")
+
+        logger.info("="*50)
+        return forecasts

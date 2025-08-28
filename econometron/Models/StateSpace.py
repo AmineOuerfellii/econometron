@@ -1,4 +1,4 @@
-from typing import Union, Dict, List, Optional ,Callable
+from typing import Union, Dict, List, Optional ,Callable ,Tuple
 import pandas as pd
 import numpy as np
 from econometron.Models.dynamicsge import linear_dsge
@@ -13,6 +13,7 @@ from scipy.optimize import minimize
 import ast
 from scipy.stats import norm, gaussian_kde
 import matplotlib.pyplot as plt
+import scipy.stats
 from scipy.stats import shapiro, probplot, skew, kurtosis
 from statsmodels.tsa.stattools import acf
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class SS_Model:
-    def __init__(self, data: Union[np.ndarray, pd.DataFrame, pd.Series],parameters: dict, model: linear_dsge = None,name:str='STate Space Model', optimizer: str = 'L-BFGS-B', estimation_method: str = 'MLE', constraints: dict = None):
+    def __init__(self, data: Union[np.ndarray, pd.DataFrame, pd.Series],parameters: dict, model: linear_dsge = None,name:str='State Space Model', optimizer: str = 'L-BFGS-B', estimation_method: str = 'MLE', constraints: dict = None):
         """
         Initializes the State Space Model with the given parameters.
         Parameters:
@@ -38,7 +39,7 @@ class SS_Model:
         else:
             self.data = data
         self.name=name if name else 'state space model'
-        self.parameters = parameters
+        self.parameters = parameters.copy()
         self.optimizer = optimizer
         self.technique = estimation_method
         self.constraints = constraints
@@ -74,8 +75,9 @@ class SS_Model:
                 self.optimizer = None
         if self.technique == 'MLE' and self.optimizer is None:
             self.optimizer = 'sa'
-        if self.optimizer.lower() not in optimizers_list:
-            raise ValueError(f"Optimizer must be one of {optimizers_list}.")
+        if self.optimizer:
+            if self.optimizer.lower() not in optimizers_list:
+                raise ValueError(f"Optimizer must be one of {optimizers_list}.")
         if self.constraints and self.optimizer != 'trust_constr':
             logger.info(f"The constraints aren't going to be taken into account since you've set your optimizer as {self.optimizer}")
         self.validated_entries_=True    
@@ -191,36 +193,48 @@ class SS_Model:
         self.D = D
         return self.D
 
-    def _make_state_space_updater(self, base_params: dict):
-        def update_state_space(params):
-            full_params = base_params.copy()
-            full_params.update(params)
+    def _make_state_space_updater(self):
+        def update_state_space(new_params=None):
+            """
+            Updates the state-space representation with either the current
+            self.parameters or with overrides from new_params.
+            """
+            # Always start from self.parameters (latest copy)
+            full_params = self.parameters.copy()
+            if new_params:
+                full_params.update(new_params)
+                self.parameters = full_params.copy()  # keep self.parameters in sync
+
+            # Handle derived parameters if defined
             if hasattr(self, '_predef_expressions') and self._predef_expressions:
                 self.define_parameter(self._predef_expressions)
-                full_params.update(self._derived_params) 
+                full_params.update(self._derived_params)
+                self.parameters = full_params.copy()
+
+            # Now construct state-space system
             if self.model is not None:
                 D, A = self.model.solve_RE_model(full_params)
             else:
                 if self.A is None or self.D is None:
                     raise ValueError("Transition matrix A and observation matrix D must be set if no solver is provided.")
-                A = self.A(full_params) if isinstance(self.A, Callable) else self.A
-                D = self.D(full_params) if isinstance(self.D, Callable) else (self.D if self.D is not None else np.zeros((self.x0.shape[0], 1)))
+                A = self.A(full_params) if callable(self.A) else self.A
+                D = self.D(full_params) if callable(self.D) else self.D
 
-            R = self.R(full_params) if isinstance(self.R, Callable) else self.R
-            Q = self.Q(full_params) if isinstance(self.Q, Callable) else self.Q
+            R = self.R(full_params) if callable(self.R) else self.R
+            Q = self.Q(full_params) if callable(self.Q) else self.Q
 
-            if not np.all(np.isfinite(A)) or not np.all(np.isfinite(D)) or not np.all(np.isfinite(R)) or not np.all(np.isfinite(Q)):
+            # Sanity checks
+            if not np.all(np.isfinite(A)) or not np.all(np.isfinite(D)) \
+            or not np.all(np.isfinite(R)) or not np.all(np.isfinite(Q)):
                 raise ValueError("Computed A, D, R, or Q contains non-numeric or infinite values.")
             if not np.all(np.linalg.eigvals(R @ R.T) >= 0):
-                raise ValueError("State covariance matrix R @ R.T must be positive semi-definite.")
+                raise ValueError("Observation covariance matrix R@R.T must be PSD.")
             if not np.all(np.linalg.eigvals(Q @ Q.T) >= 0):
-                raise ValueError("Observation covariance matrix Q @ Q.T must be positive semi-definite.")
-            RR = R @ R.T
-            QQ = Q @ Q.T
-            return {'A': A, 'D': D, 'Q': QQ, 'R': RR}
+                raise ValueError("State covariance matrix Q@Q.T must be PSD.")
+
+            return {'A': A, 'D': D, 'Q': Q @ Q.T, 'R': R @ R.T}
 
         return update_state_space
-
     def define_parameter(self, definition: dict):
         for param in definition:
             if param not in self.parameters:
@@ -247,68 +261,110 @@ class SS_Model:
             self._predef= definition
             self._predef_expressions[param]=expr
             self._derived_params[param] = value
-    def _set_priors(self, priors: Union[Dict[str, tuple], List[tuple]], bounds: List[tuple]):
+    def _set_priors(self, priors: Dict[str, Tuple], bounds: List[Tuple[float, float]]):
         """
-        Set priors for Bayesian estimation and return a prior function using make_prior_function.
-
-        Parameters:
-        - priors: Dictionary or list of tuples specifying prior distributions.
-                Dict format: {'param': ('dist_name', {'param1': value1, ...}), ...}
-                List format: [('param', ('dist_name', {'param1': value1, ...})), ...]
-        - bounds: List of (lower, upper) tuples for each free parameter.
-
-        Returns:
-        - Callable: Prior function that computes log-prior probability for a parameter vector.
+        Set priors for Bayesian estimation. Priors must be a dict:
+            {'param': (dist_obj, {'kw1': v1, ...}), ...}
+        where dist_obj is a scipy.stats distribution (e.g., scipy.stats.gamma, scipy.stats.beta)
+        and params_dict has finite numeric parameters.
+        Bounds is a list of (lower, upper) tuples for free parameters.
         """
         if self.technique != 'Bayesian':
-            raise ValueError("Priors can only be set for Bayesian estimation.")
+            raise ValueError("Priors only for Bayesian estimation.")
 
-        # Convert list to dict for uniform handling
-        if isinstance(priors, list):
-            priors = {param: dist_info for param, dist_info in priors}
-        elif not isinstance(priors, dict):
-            raise ValueError("Priors must be a dictionary or list of tuples.")
+        if not isinstance(priors, dict):
+            raise ValueError("Priors must be a dict {param: (dist_obj, params_dict)}.")
 
-        # Get free parameters (exclude fixed and derived)
-        param_names = [p for p in self.parameters.keys(
-        ) if p not in self.fixed_params and p not in self._derived_params]
-        if len(param_names) != len(priors):
-            raise ValueError(
-                f"Priors must be specified for all {len(param_names)} free parameters: {param_names}.")
-        if len(param_names) != len(bounds):
-            raise ValueError(
-                f"Bounds must match the number of free parameters: {len(param_names)}.")
-        supported_dists = {'gamma', 'beta', 'norm', 'uniform'}
-        for param, (dist_name, dist_params) in priors.items():
-            if param not in self.parameters:
-                raise ValueError(
-                    f"Parameter {param} not in self.parameters: {self.parameters.keys()}.")
-            if param in self.fixed_params:
-                raise ValueError(
-                    f"Parameter {param} is fixed and cannot have a prior.")
-            if param in self._derived_params:
-                raise ValueError(
-                    f"Parameter {param} is derived and cannot have a prior.")
-            if dist_name not in supported_dists:
-                raise ValueError(
-                    f"Distribution {dist_name} not supported. Use: {supported_dists}.")
-            if not isinstance(dist_params, dict):
-                raise ValueError(
-                    f"Distribution parameters for {param} must be a dictionary.")
-        bounds_dict = {param: bound for param,
-                       bound in zip(param_names, bounds)}
-        for param, (lb, ub) in bounds_dict.items():
+        # Debug: Show priors
+        print("Priors:", {k: (getattr(v[0], 'name', str(v[0])), v[1]) for k, v in priors.items()})
+
+        # Get free parameters
+        param_names = [p for p in self.parameters.keys() if p not in self.fixed_params and p not in self._derived_params]
+
+        # # Check priors match free parameters
+        # if set(param_names) != set(priors.keys()):
+        #     missing = [p for p in param_names if p not in priors]
+        #     extra = [p for p in priors if p not in param_names]
+        #     msg = []
+        #     if missing:
+        #         msg.append(f"Missing priors: {missing}")
+        #     if extra:
+        #         msg.append(f"Extra priors: {extra}")
+        #     raise ValueError(f"Priors must match free parameters: {param_names}. {' '.join(msg)}")
+
+        # # Check bounds length
+        # if len(param_names) != len(bounds):
+        #     raise ValueError(f"Bounds must match free parameters: {len(param_names)}.")
+
+        # def _validate_and_freeze(param: str, dist_obj, kwargs: dict) -> object:
+        #     """Validate and freeze distribution."""
+        #     print(f"Validating {param}: dist_obj={getattr(dist_obj, 'name', str(dist_obj))}, kwargs={kwargs}")
+
+        #     # Check dist_obj is callable
+        #     if not callable(dist_obj):
+        #         raise ValueError(f"For '{param}', dist_obj must be callable. Got: {dist_obj}, type: {type(dist_obj)}")
+
+        #     # Check kwargs is dict
+        #     if not isinstance(kwargs, dict):
+        #         raise ValueError(f"For '{param}', params must be dict, got {type(kwargs)}.")
+
+        #     # Check kwargs values
+        #     for k, v in kwargs.items():
+        #         if not isinstance(v, (int, float)) or not np.isfinite(v):
+        #             raise ValueError(f"For '{param}', kwarg '{k}' must be finite number, got {v}.")
+
+        #     # Freeze distribution
+        #     try:
+        #         frozen = dist_obj(**kwargs)
+        #     except Exception as e:
+        #         raise ValueError(f"For '{param}', failed to freeze distribution: {e}")
+
+        #     # Check logpdf
+        #     if not hasattr(frozen, "logpdf") or not callable(frozen.logpdf):
+        #         raise ValueError(f"For '{param}', frozen distribution needs .logpdf.")
+
+        #     # Test logpdf
+        #     try:
+        #         probe = float(frozen.logpdf(1.0))
+        #         if not np.isfinite(probe):
+        #             raise ValueError(f"For '{param}', .logpdf gave non-finite value.")
+        #     except Exception as e:
+        #         raise ValueError(f"For '{param}', .logpdf failed: {e}")
+
+        #     return frozen
+
+        # # Validate priors
+        # frozen_priors = {}
+        # for param, spec in priors.items():
+        #     if param not in self.parameters:
+        #         raise ValueError(f"Parameter '{param}' not in self.parameters.")
+        #     if param in self.fixed_params:
+        #         raise ValueError(f"Parameter '{param}' is fixed.")
+        #     if param in self._derived_params:
+        #         raise ValueError(f"Parameter '{param}' is derived.")
+        #     if not isinstance(spec, tuple) or len(spec) != 2:
+        #         raise ValueError(f"Prior for '{param}' must be (dist_obj, params_dict). Got: {spec}")
+
+        #     dist_obj, kwargs = spec
+        #     frozen_priors[param] = _validate_and_freeze(param, dist_obj, kwargs)
+
+        # # Validate bounds
+        bounds_dict = {param: bound for param, bound in zip(param_names, bounds)}
+        for param, bound in bounds_dict.items():
+            if not isinstance(bound, tuple) or len(bound) != 2:
+                raise ValueError(f"Bounds for '{param}' must be (lower, upper). Got: {bound}")
+            lb, ub = bound
             if not isinstance(lb, (int, float)) or not (isinstance(ub, (int, float)) or ub == float('inf')):
-                raise ValueError(
-                    f"Bounds for parameter {param} must be numeric or inf for upper bound: ({lb}, {ub}).")
+                raise ValueError(f"Bounds for '{param}' must be numeric; upper can be float('inf'). Got: {bound}")
+            if not np.isfinite(lb):
+                raise ValueError(f"Lower bound for '{param}' must be finite. Got: {lb}")
             if not np.isinf(ub) and lb >= ub:
-                raise ValueError(
-                    f"Lower bound {lb} must be less than upper bound {ub} for {param}.")
-        prior = make_prior_function(
-            param_names=param_names, priors=priors, bounds=bounds, verbose=True)
+                raise ValueError(f"Lower bound {lb} must be less than upper bound {ub} for '{param}'.")
+
+        # Set prior function
+        prior = make_prior_function(param_names=param_names, priors=priors, bounds=bounds_dict, verbose=True)
         self.prior_fn = prior
         return prior
-
     def calibrate_params(self, fixed_params:List[set]):
             for param, value in fixed_params:
                 if param in self.parameters:
@@ -327,10 +383,9 @@ class SS_Model:
         parameters = self.parameters.copy()
         param_names = [k for k in parameters.keys()if k not in self._derived_params.keys() and k not in self.fixed_params.keys()]
         initial_params = [parameters[name] for name in param_names]
-        print(initial_params)
         self.validate_entries_()
         if self.validated_entries_:
-            update_state_space = self._make_state_space_updater(self.parameters)
+            update_state_space = self._make_state_space_updater()
             self.state_updater=update_state_space
         bounds_set = [(lb, ub) for lb, ub in zip(Lower_bound, Upper_bound)]
         match self.technique:
@@ -362,17 +417,61 @@ class SS_Model:
         self.result = results
     def summary(self):
         """
-        Generate a summary table and plots for model results.
-        
+        Generate a summary table and plots for model results .
         """
         if not hasattr(self, 'result') or self.result is None:
+            logger.error("Model must be fitted before generating summary.")
             raise ValueError("Model must be fitted before generating summary.")
+
         param_names = [k for k in self.parameters.keys() if k not in self._derived_params and k not in self.fixed_params]
         n_params = len(param_names)
         T = self.data.shape[1]
-        log_lik = None
-        aic = bic = hqic = None
-        table_data = []
+
+        def compute_ess(samples: np.ndarray) -> np.ndarray:
+            """Compute effective sample size for each parameter."""
+            def ess_single_param(param_samples):
+                n_samples = len(param_samples)
+                autocorr = np.correlate(param_samples, param_samples, mode='full')
+                autocorr = autocorr[n_samples-1:] / autocorr[n_samples-1]
+                idx = np.where(autocorr < 0.05)[0]
+                tau = 1 + 2 * np.sum(autocorr[1:idx[0]]) if idx.size > 0 else n_samples
+                return n_samples / tau if tau > 0 else n_samples
+            return np.array([ess_single_param(samples[:, i]) for i in range(samples.shape[1])])
+
+        def compute_rhat(samples: np.ndarray, n_chains: int = 2) -> np.ndarray:
+            """Compute Gelman-Rubin statistic (R-hat) by splitting samples."""
+            n_samples = samples.shape[0]
+            chain_length = n_samples // n_chains
+            chains = [samples[i*chain_length:(i+1)*chain_length] for i in range(n_chains)]
+            chain_means = np.array([np.mean(chain, axis=0) for chain in chains])
+            chain_vars = np.array([np.var(chain, axis=0, ddof=1) for chain in chains])
+            mean_of_means = np.mean(chain_means, axis=0)
+            B = chain_length * np.var(chain_means, axis=0, ddof=1)
+            W = np.mean(chain_vars, axis=0)
+            var_plus = (chain_length - 1) / chain_length * W + B / chain_length
+            return np.sqrt(var_plus / W) if np.all(W > 0) else np.ones_like(W)
+
+        def plot_posteriors(samples: np.ndarray, param_names: list, mean_params: np.ndarray, hdi_prob: float = 0.95):
+            """Plot posterior distributions with mean and HDI."""
+            n_params = samples.shape[1]
+            hdi_lower = np.percentile(samples, 100 * (1 - hdi_prob) / 2, axis=0)
+            hdi_upper = np.percentile(samples, 100 * (1 + hdi_prob) / 2, axis=0)
+            fig, axes = plt.subplots(n_params, 1, figsize=(8, 3 * n_params), squeeze=False)
+            for i, param in enumerate(param_names):
+                kde = gaussian_kde(samples[:, i])
+                x_range = np.linspace(np.min(samples[:, i]), np.max(samples[:, i]), 200)
+                axes[i, 0].plot(x_range, kde(x_range), label=f'{param} PDF', color='#1f77b4', linewidth=2)
+                axes[i, 0].axvline(mean_params[i], color='#d62728', linestyle='--', label='Mean', alpha=0.8)
+                axes[i, 0].axvline(hdi_lower[i], color='#2ca02c', linestyle=':', label=f'{hdi_prob*100:.0f}% HDI', alpha=0.8)
+                axes[i, 0].axvline(hdi_upper[i], color='#2ca02c', linestyle=':', alpha=0.8)
+                axes[i, 0].set_xlabel(param, fontsize=12)
+                axes[i, 0].set_ylabel('Density', fontsize=12)
+                axes[i, 0].set_title(f'Posterior of {param}', fontsize=14)
+                axes[i, 0].legend(fontsize=10)
+                axes[i, 0].grid(True, alpha=0.3, linestyle='--')
+            plt.tight_layout()
+            plt.show()
+
         if self.technique == 'MLE':
             x_opt = self.result.get('x')
             log_lik = self.result.get('fun') if self.result.get('fun') is not None else np.nan
@@ -382,6 +481,7 @@ class SS_Model:
                 aic = 2 * n_params - 2 * log_lik
                 bic = n_params * np.log(T) - 2 * log_lik
                 hqic = 2 * n_params * np.log(np.log(T)) - 2 * log_lik
+            table_data = []
             if x_opt is not None:
                 try:
                     def obj_func(params): return kalman_objective(params, self.fixed_params, param_names, self.data, self.state_updater)
@@ -398,7 +498,14 @@ class SS_Model:
                                 signif = '**'
                             elif p_values[i] < 0.05:
                                 signif = '*'
-                        table_data.append({'Parameter': param,'Value': x_opt[i],'Std. Err.': std_err[i],'p-value': p_values[i],'t-value': t_values[i],'Significance': signif})
+                        table_data.append({
+                            'Parameter': param,
+                            'Value': x_opt[i],
+                            'Std. Err.': std_err[i],
+                            'p-value': p_values[i],
+                            't-value': t_values[i],
+                            'Significance': signif
+                        })
                 except Exception as e:
                     logger.warning(f"Failed to compute stats: {str(e)}")
                     table_data = [{'Parameter': param, 'Value': x_opt[i], 'Std. Err.': np.nan, 'p-value': np.nan, 't-value': np.nan, 'Significance': ''} for i, param in enumerate(param_names)]
@@ -408,7 +515,8 @@ class SS_Model:
             print("=" * 60)
             print(f"Model: {getattr(self, 'name', 'State Space Model')}")
             print("=" * 60)
-            print(f"{f'Log-Likelihood: {log_lik:.4f}' if not np.isnan(log_lik) else 'Log-Likelihood: N/A':<30}"f"{f'AIC: {aic:.4f}' if aic is not None else 'AIC: N/A':<30}")
+            print(f"{f'Log-Likelihood: {log_lik:.4f}' if not np.isnan(log_lik) else 'Log-Likelihood: N/A':<30}"
+                f"{f'AIC: {aic:.4f}' if aic is not None else 'AIC: N/A':<30}")
             print(f"{f'BIC: {bic:.4f}' if bic is not None else 'BIC: N/A':<30}"
                 f"{f'HQIC: {hqic:.4f}' if hqic is not None else 'HQIC: N/A':<30}")
             print("=" * 60)
@@ -427,78 +535,84 @@ class SS_Model:
                         f"{row['p-value']:<10.4f} | {row['t-value']:<10.4f} | {row['Significance']:<5}")
                 print("-" * 60)
             print("=" * 60)
+
         elif self.technique == 'Bayesian':
             samples = self.result.get('samples')
-            log_posterior = self.result.get('log_posterior', np.nan)
+            log_posterior = self.result.get('log_posterior', np.array([np.nan]))
             acceptance_rate = self.result.get('acceptance_rate', np.nan)
             mean_params = self.result.get('mean_posterior_parameters')
             std_params = self.result.get('std_posterior_parameters')
             message = self.result.get('message', 'No message available')
-            if not np.isnan(log_posterior):
-                aic = 2 * n_params - 2 * log_posterior
-                bic = n_params * np.log(T) - 2 * log_posterior
-                hqic = 2 * n_params * np.log(np.log(T)) - 2 * log_posterior
-            if mean_params is not None and std_params is not None:
-                for i, param in enumerate(param_names):
-                    table_data.append({
-                        'Parameter': param,
-                        'Mean': mean_params[i],
-                        'Std. Dev.': std_params[i],
-                        'Credible Interval (95%)': f"[{np.percentile(samples[:, i], 2.5):.4f}, {np.percentile(samples[:, i], 97.5):.4f}]",
-                        'Significance': ''
-                    })
 
-            print("=" * 60)
-            print(f"{'MODEL':^60}")  # Centers 'MODEL' in 60 characters
-            print("=" * 60)
+            if samples is None or mean_params is None or std_params is None:
+                logger.error("Missing required fields: samples, mean_posterior_parameters, or std_posterior_parameters")
+                raise ValueError("Missing required result fields: samples, mean_posterior_parameters, or std_posterior_parameters")
+
+            # Compute statistics
+            hdi_prob = 0.95
+            hdi_lower = np.percentile(samples, 100 * (1 - hdi_prob) / 2, axis=0)
+            hdi_upper = np.percentile(samples, 100 * (1 + hdi_prob) / 2, axis=0)
+            ess = compute_ess(samples)
+            rhat = compute_rhat(samples)
+            log_posterior_mean = np.mean(log_posterior) if np.all(np.isfinite(log_posterior)) else np.nan
+            aic = 2 * n_params - 2 * log_posterior_mean if not np.isnan(log_posterior_mean) else np.nan
+            bic = n_params * np.log(T) - 2 * log_posterior_mean if not np.isnan(log_posterior_mean) else np.nan
+            hqic = 2 * n_params * np.log(np.log(T)) - 2 * log_posterior_mean if not np.isnan(log_posterior_mean) else np.nan
+
+            # Create summary DataFrame
+            summary_data = {
+                'mean': mean_params,
+                'sd': std_params,
+                f'hdi_{100*(1-hdi_prob)/2:.1f}%': hdi_lower,
+                f'hdi_{100*(hdi_prob)/2:.1f}%': hdi_upper,
+                'ess_bulk': ess,
+                'rhat': rhat
+            }
+            summary_df = pd.DataFrame(summary_data, index=param_names)
+
+            # Print summary
+            print("=" * 80)
+            print(f"{'Bayesian Estimation Summary':^80}")
+            print("=" * 80)
             print(f"Model: {getattr(self, 'name', 'State Space Model')}")
-            print("=" * 60)
-            print(f"{f'Log-Posterior: {log_posterior:.4f}' if not np.isnan(log_posterior) else 'Log-Posterior: N/A':<30}"
-                f"{f'AIC: {aic:.4f}' if aic is not None else 'AIC: N/A':<30}")
-            print(f"{f'BIC: {bic:.4f}' if bic is not None else 'BIC: N/A':<30}"
-                f"{f'HQIC: {hqic:.4f}' if hqic is not None else 'HQIC: N/A':<30}")
-            print("=" * 60)
-            print(f"{'Technique: Bayesian':<30}"
-                f"{f'Acceptance Rate: {acceptance_rate:.4f}' if not np.isnan(acceptance_rate) else 'Acceptance Rate: N/A':<30}")
-            print(f"{f'Number of Estimated Parameters: {n_params}':<30}"
-                f"{f'Message: {message}':<30}")
-            print("=" * 60)
-            if table_data:
-                df = pd.DataFrame(table_data)
-                print(df.to_string(index=False, float_format="%.4f"))
-            print("=" * 60)
-            if samples is not None:
-                n_params = samples.shape[1]
-                fig, axes = plt.subplots(n_params, 1, figsize=(8, 4 * n_params), squeeze=False)
-                for i, param in enumerate(param_names):
-                    kde = gaussian_kde(samples[:, i])
-                    x_range = np.linspace(np.min(samples[:, i]), np.max(samples[:, i]), 200)
-                    axes[i, 0].plot(x_range, kde(x_range), label=f'{param} PDF', color='blue')
-                    axes[i, 0].axvline(np.mean(samples[:, i]), color='red', linestyle='--', label='Mean')
-                    axes[i, 0].axvline(np.percentile(samples[:, i], 2.5), color='green', linestyle=':', label='95% CI')
-                    axes[i, 0].axvline(np.percentile(samples[:, i], 97.5), color='green', linestyle=':')
-                    axes[i, 0].set_xlabel(param)
-                    axes[i, 0].set_ylabel('Density')
-                    axes[i, 0].set_title(f'Posterior Distribution of {param}')
-                    axes[i, 0].legend()
-                    axes[i, 0].grid(True, alpha=0.3)
-                plt.tight_layout()
-                plt.show()
-        if self.result and (self.technique == 'MLE' and self.result.get('x') is not None) or (self.technique == 'Bayesian' and self.result.get('mean_posterior_parameters') is not None):
+            print(f"Technique: Bayesian (Random Walk Metropolis)")
+            print(f"Acceptance Rate: {acceptance_rate:.4f}" if not np.isnan(acceptance_rate) else "Acceptance Rate: N/A")
+            print(f"Number of Parameters: {n_params}")
+            print(f"Number of Samples: {samples.shape[0]}")
+            print(f"Log-Posterior (mean): {log_posterior_mean:.4f}" if not np.isnan(log_posterior_mean) else "Log-Posterior: N/A")
+            print(f"AIC: {aic:.4f}" if not np.isnan(aic) else "AIC: N/A")
+            print(f"BIC: {bic:.4f}" if not np.isnan(bic) else "BIC: N/A")
+            print(f"HQIC: {hqic:.4f}" if not np.isnan(hqic) else "HQIC: N/A")
+            print(f"Message: {message}")
+            print("=" * 80)
+            print(summary_df.round(4).to_string())
+            print("=" * 80)
+
+            # Plot posteriors
+            try:
+                plot_posteriors(samples, param_names, mean_params, hdi_prob)
+            except Exception as e:
+                logger.warning(f"Failed to generate posterior plots: {str(e)}")
+
+            # Update and print full parameters
             full_params = self.parameters.copy()
-            if self.technique == 'MLE':
-                for param, value in zip(param_names, self.result['x']):
-                    full_params[param] = value
-            else:
-                for param, value in zip(param_names, self.result['mean_posterior_parameters']):
-                    full_params[param] = value
+            for param, value in zip(param_names, mean_params):
+                full_params[param] = value
             if hasattr(self, '_predef') and self._predef:
-                self.define_parameter(self._predef)
-                for param in self._derived_params:
-                    full_params[param] = self._derived_params[param]
-            print(full_params)
-            kalman_smooth(self.data, full_params,self.state_updater, plot=True)
-    def predict(self, steps: int, test_data: Optional[np.ndarray] = None, plot: bool = False):
+                try:
+                    self.define_parameter(self._predef)
+                    for param in self._derived_params:
+                        full_params[param] = self._derived_params[param]
+                except Exception as e:
+                    logger.warning(f"Failed to update derived parameters: {str(e)}")
+            print("\nEstimated Parameters:")
+            for param, value in full_params.items():
+                print(f"{param}: {value:.4f}")
+            try:
+                kalman_smooth(self.data, full_params, self.state_updater, plot=True)
+            except Exception as e:
+                logger.warning(f"Kalman smoother failed: {str(e)}")
+    def predict(self, steps: int=5, test_data: Optional[np.ndarray] = None, plot: bool = True):
         """
         Generate predictions for the next 'steps' time points and evaluate against test_data.
 
@@ -533,7 +647,7 @@ class SS_Model:
             for param in self._derived_params:
                 full_params[param] = self._derived_params[param]
         ss_params = self.state_updater(full_params)
-        A, D= ss_params['A'], ss_params['D'], ss_params['Q'], ss_params['R']
+        A, D= ss_params['A'], ss_params['D']
         try:
             kalman = Kalman(ss_params)
             smooth_result = kalman.smooth(self.data)
@@ -569,10 +683,10 @@ class SS_Model:
             
             result['metrics'] = {'MSE': mse,'RMSE': rmse,'MAE': mae,'MAPE': mape}
             result['residuals'] = residuals
+            T_test = residuals.shape[1]
+            time = np.arange(T_test)
+            n_vars = residuals.shape[0]
             if plot:
-                T_test = residuals.shape[1]
-                time = np.arange(T_test)
-                n_vars = residuals.shape[0]
                 fig, axes = plt.subplots(n_vars, 1, figsize=(8, 4 * n_vars), squeeze=False)
                 for i in range(n_vars):
                     axes[i, 0].plot(time, residuals[i, :], label='Residuals', color='purple')
@@ -587,7 +701,7 @@ class SS_Model:
         
         return result
 
-    def evaluate(self, data: Optional[np.ndarray] = None, plot: bool = False):
+    def evaluate(self, data: Optional[np.ndarray] = None, plot: bool = True):
         """
         Evaluate model residuals and diagnostics on training or test data.
 
@@ -596,7 +710,7 @@ class SS_Model:
         data : ndarray, optional
             Data to evaluate (defaults to self.data if None).
         plot : bool
-            Whether to plot residuals (default: False).
+            Whether to plot residuals (default: True).
 
         Returns:
         --------
@@ -632,12 +746,12 @@ class SS_Model:
         mse = np.mean(residuals**2)
         rmse = np.sqrt(mse)
         mae = np.mean(np.abs(residuals))
-        mape = np.mean(np.abs(residuals / data)) * 100 if np.all(data != 0) else np.nan
+        mape = np.mean(np.abs(residuals / data)) * 100 if np.all(self.data != 0) else np.nan
         metrics = {'MSE': mse,'RMSE': rmse,'MAE': mae,'MAPE': mape}
+        n_vars = data.shape[0]
+        T =data.shape[1]
+        time = np.arange(T)
         if plot:
-            T = data.shape[1]
-            time = np.arange(T)
-            n_vars = data.shape[0]
             fig, axes = plt.subplots(n_vars, 1, figsize=(8, 4 * n_vars), squeeze=False)
             for i in range(n_vars):
                 axes[i, 0].plot(time, residuals[i, :], label='Residuals', color='purple')
@@ -683,7 +797,7 @@ class SS_Model:
                 acf_values = diagnostics[f'acf_var{i+1}']
                 confint = diagnostics[f'acf_confint_var{i+1}']
                 lags = np.arange(len(acf_values))
-                ax2.stem(lags, acf_values, use_line_collection=True)
+                ax2.stem(lags, acf_values)
                 ax2.fill_between(lags, confint[:, 0] - acf_values, confint[:, 1] - acf_values, alpha=0.2)
                 ax2.axhline(0, color='black', linestyle='--', alpha=0.3)
                 ax2.set_xlabel('Lag')

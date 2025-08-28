@@ -167,7 +167,7 @@ class VARIMA(VARMA):
             raise ValueError("No model fitted. Cannot generate forecasts.")
 
         # Generate forecasts in differenced scale using parent VARMA predict method
-        forecasts = super().predict(n_periods=n_periods, plot=False, tol=tol)
+        forecasts = super().predict(n_periods=n_periods, plot=False)
         forecast_df = forecasts['point']
         ci_lower_df = forecasts['ci_lower']
         ci_upper_df = forecasts['ci_upper']

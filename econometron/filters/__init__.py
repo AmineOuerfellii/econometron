@@ -123,7 +123,6 @@ class Kalman:
         if P_t[0,0]== 1000:
            x_t=y[:,0]    
         else:
-            print('oo')
             x_t = self.X_0
         for t in range(T):
             # print('x',x_t)
@@ -320,12 +319,10 @@ def kalman_objective(params, fixed_params, param_names, y, update_state_space):
     for name, value in zip(param_names, params):
         full_params[name] = value
     try:
-        ss_params = update_state_space(full_params)
-        print(ss_params)      
+        ss_params = update_state_space(full_params)    
         kalman = Kalman(ss_params)
         result = kalman.filter(y)
         log_lik = result['log_lik']
-        print('loglik',log_lik)
         return log_lik
     except Exception as e:
         print("Error in kalman_objective:")
