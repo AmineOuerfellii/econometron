@@ -2,7 +2,6 @@
 import numpy as np
 from econometron.filters import kalman_objective
 from econometron.utils.Sampler import rwm as sampler
-from econometron.utils.estimation.results import create_results_table
 from typing import List, Tuple, Dict, Callable
 import scipy.stats
 

@@ -1,7 +1,6 @@
 from econometron.filters import kalman_objective
 from econometron.filters import Kalman
 from econometron.utils.optimizers import genetic_algorithm, simulated_annealing
-from econometron.utils.estimation import create_results_table
 import numpy as np
 import pandas as pd
 
