@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from .basis import ChebyshevBasis
 from econometron.utils.solver import nr_solve
 from econometron.utils.optimizers import minimize_qn
+from .Local_proj import Localprojirf
 
 class ProjectionSolver:
     def __init__(self, order_vector, lower_bounds, upper_bounds):
