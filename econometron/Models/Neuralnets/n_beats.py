@@ -865,8 +865,7 @@ class Trainer_ts:
                         input_shape = None
                 if input_shape:
                     logger.info("\nDetailed Model Architecture:")
-                    torch_summary(
-                        self.model, input_size=input_shape, device=self.device)
+                    torch_summary(self.model, input_size=input_shape, device=self.device)
             except Exception as e:
                 logger.warning(f"Could not generate detailed summary: {e}")
         if hasattr(self, 'training_history') and self.training_history['train_loss']:

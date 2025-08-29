@@ -792,8 +792,7 @@ class VARMA(VAR):
             if self.fitted:
                 logger.info("Model is fitted.")
             else:
-                warnings.warn(
-                    "The models is not well(Under/Over) Fitted on the Data")
+                warnings.warn("The models is not well(Under/Over) Fitted on the Data")
         if plot:
             self.plot_fitted()
         return self.best_model

@@ -43,7 +43,7 @@ class VAR:
             if self.fitted:
                 print("the Model is well Fitted ...")
                 print("="*30, "Predictions", "="*30)
-                self.predict(forecast_horizon, plot=plot, tol=1e-6)
+                self.predict(forecast_horizon, plot=plot)
                 if bootstrap_n is not None:
                     boots = True
                 print("="*30, "Impulse Responses ", "="*30)
@@ -159,29 +159,36 @@ class VAR:
         if self.check_stationarity:
             if verbose:
                 print("Performing stationarity checks...")
+            
+            self.stationarity_results = {}  # reset results
+
+            # Perform stationarity tests for each column
             for col in self.data.columns:
                 series = self.data[col]
                 adf_result = self._adf_test(series)
                 kpss_result = self._Kpss_test(series)
                 self.stationarity_results[col] = {
-                    'adf': adf_result, 'kpss': kpss_result}
-            for col in self.stationarity_results:
-                if verbose:
-                    print(f"\nColumn: {col}")
-                verdict = True
-                if self.stationarity_results[col]['adf']['P_value'] > 0.05 and self.stationarity_results[col]['kpss']['P_value'] < 0.05:
-                    verdict = False
+                    'adf': adf_result,
+                    'kpss': kpss_result
+                }
+            verdicts = {}
+            for col, results in self.stationarity_results.items():
+                if results['adf']['P_value'] > 0.05 and results['kpss']['P_value'] < 0.05:
+                    verdicts[col] = False
                     if verbose:
-                        print(f"Verdict , The serie : {col} is not stationary")
+                        print(f"Verdict: The series '{col}' is NOT stationary")
                 else:
+                    verdicts[col] = True
                     if verbose:
-                        print(f"Verdict , The serie : {col} is stationary")
-                self.stationarity_results[col] = verdict
-                if np.all(list(self.stationarity_results.values())):
-                    self.data = data
-                else:
-                    self.data = None
-                    raise ValueError("Data needs to be stationnary")
+                        print(f"Verdict: The series '{col}' is stationary")
+
+            self.stationarity_results = verdicts
+            if not np.all(list(verdicts.values())):
+                self.data = None
+                raise ValueError("Data needs to be stationary")
+            else:
+                self.data = data
+
         else:
             print("Skipping stationarity checks - assuming data is stationary")
     # ===================Getting to the Juicy part ==========================>>>>>>>
@@ -788,7 +795,7 @@ class VAR:
                 ax.legend(loc='upper left')
             plt.tight_layout()
             plt.show()
-            return {'point': forecast_df, 'ci_lower': ci_lower_df, 'ci_upper': ci_upper_df}
+        return {'point': forecast_df, 'ci_lower': ci_lower_df, 'ci_upper': ci_upper_df}
             # predict : ver
 
     def simulate(self, n_periods=100, plot=True, tol=1e-6):
