@@ -3,6 +3,7 @@ from econometron.utils.estimation.Regression import ols_estimator
 import numpy as np
 from typing import List, Optional, Dict, Any
 import matplotlib.pyplot as plt
+
 class Localprojirf:
     def __init__(self,data: pd.DataFrame,endogenous_vars: List[str],exogenous_vars: Optional[List[str]] = None,max_horizon: int = 20,lags: int = 4,constant: bool = True,date_col: Optional[str] = None):
         self.data = data.copy()
