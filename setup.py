@@ -7,9 +7,10 @@ long_description = (this_dir / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="econometron",
-    version="0.0.3",
+    version="0.0.4",
     author="Mohamed Amine Ouerfelli",
     author_email="mohamedamine.ouerfelli@outlook.com",
+    include_package_data=True,
     description=(
       "Econometron is a Python library for advanced econometric analysis and time series forecasting,"
       "combining statistical rigor with modern computational methods. It offers a precise,"

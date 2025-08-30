@@ -55,7 +55,7 @@ from econometron.Models.VectorAutoReg import VAR
 
 # Load your time series data
 data = ...  # Your multivariate time series data
-model = VAR(data=data,max_p=2)
+model = VAR(data=data,max_p=2,check_stationnarity=True)
 results = model.fit()
 ```
 
