@@ -10,7 +10,7 @@ class Localprojirf:
     def __init__(self,data: pd.DataFrame,endogenous_vars: List[str],exogenous_vars: Optional[List[str]] = None,max_horizon: int = 8,lags: Union[int, List[int]] = [1, 2],constant: bool = True,
                  date_col: Optional[str] = None):
         """
-        Initialize Local Projection IRF estimator to match Stata's lpirf.
+        Initialize Local Projection IRF estimator .
 
         Parameters:
         -----------
@@ -21,10 +21,10 @@ class Localprojirf:
         exogenous_vars : Optional[List[str]]
             List of exogenous variables (for dynamic multipliers)
         max_horizon : int
-            Maximum forecast horizon (default 8, matching Stata)
+            Maximum forecast horizon (default 8)
         lags : Union[int, List[int]]
             Lags to include. If int, includes lags 1 through lags.
-            If list, includes specific lags (default [1,2] matching Stata)
+            If list, includes specific lags (default [1,2])
         constant : bool
             Whether to include constant term
         date_col : Optional[str]
@@ -84,7 +84,7 @@ class Localprojirf:
         return pd.concat(lag_dict, axis=1)
 
     def _prepare(self) -> pd.DataFrame:
-        """Prepare the dataset with lags, matching Stata's data preparation."""
+        """Prepare the dataset with lags"""
         parts = []
         for v in self.endogenous_vars:
             parts.append(self.data[v].astype(float).rename(v))
@@ -141,8 +141,7 @@ class Localprojirf:
                                base: pd.DataFrame) -> tuple:
         """
         Build regression data for a specific response-impulse-horizon combination.
-
-        This method correctly handles the timing and variable selection to match Stata.
+        This method correctly handles the timing and variable selection.
         """
         if impulse_var in self.exogenous_vars:
             # For exogenous variables, estimate dynamic multipliers
@@ -533,7 +532,7 @@ class Localprojirf:
 
     def get_summary(self) -> str:
         """
-        Return a formatted string summary of IRF results, mimicking Stata output.
+        Return a formatted string summary of IRF results
 
         Returns:
         --------
@@ -559,7 +558,7 @@ class Localprojirf:
                     ci_lower = row["beta"] - 1.96 * row["se"]
                     ci_upper = row["beta"] + 1.96 * row["se"]
 
-                    stata_row = {
+                    _row = {
                         "impulse": imp_var,
                         "response": resp_var,
                         "horizon": horizon_str,
@@ -570,7 +569,7 @@ class Localprojirf:
                         "ci_lower": ci_lower,
                         "ci_upper": ci_upper,
                     }
-                    all_rows.append(stata_row)
+                    all_rows.append(_row)
 
         df = pd.DataFrame(all_rows)
 
