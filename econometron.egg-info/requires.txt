@@ -1,0 +1,9 @@
+numpy>=1.23.5
+pandas>=1.5.3
+scipy>=1.13.0
+matplotlib>=3.8.4
+statsmodels>=0.14.1
+sympy>=1.13.0
+torch>=1.13.1
+scikit-learn>=1.0.2
+torchinfo>=1.7.2

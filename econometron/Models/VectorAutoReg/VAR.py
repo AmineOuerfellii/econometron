@@ -6,10 +6,14 @@ from statsmodels.tsa.stattools import adfuller, kpss
 from statsmodels.stats.stattools import durbin_watson
 from scipy.stats import shapiro, norm, jarque_bera, probplot, multivariate_normal
 import logging
-
+import warnings
+from statsmodels.tools.sm_exceptions import InterpolationWarning
 from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch, breaks_cusumolsresid
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+warnings.simplefilter("ignore", InterpolationWarning)
 
 
 class VAR:
@@ -36,7 +40,7 @@ class VAR:
         self.best_criterion_value = None
         self.all_results = []
         self.roots = []
-        self._validate_the_data(data,verbose=verbose)
+        self._validate_the_data(data, columns=columns, verbose=verbose)
         if Key == "EL_RAPIDO":
             print("="*30, "Fitting the model", "="*30)
             self.fit(columns)
@@ -123,74 +127,131 @@ class VAR:
     #####################
     def _adf_test(self, series):
         try:
-            if len(series.dropna()) < 2:
-                raise ValueError("Series are Too short to apply an ADF test")
-            results = adfuller(series.dropna(), autolag='AIC')
-            return {'P_value': results[1], 'statistic': results[0], 'critical_values': results[4]}
+            series_clean = series.dropna()
+            n = len(series_clean)
+            if n < 5:
+                raise ValueError("Series too short to apply ADF test")
+            max_lag = min(int(12 * (n / 100) ** 0.25), n - 2)
+            results = adfuller(series_clean, maxlag=max_lag, autolag='AIC')
+            return {'test_statistic': results[0],'p_value': results[1],'used_lag': results[2],'nobs': results[3],'critical_values': results[4],'icbest': results[5]
+            }
         except Exception as e:
-            logger.warning(f"ADF test failed: {e}")
-            return {'P_value': 1.0, 'statistic': np.nan, 'critical_values': {}}
+            logger.warning(f"ADF test failed for series '{series.name}': {e}")
+            return {
+                'test_statistic': np.nan,
+                'p_value': 1.0,
+                'used_lag': None,
+                'nobs': None,
+                'critical_values': {},
+                'icbest': None
+            }
+
 
     def _Kpss_test(self, series):
         try:
-            if len(series.dropna()) < 2:
-                raise ValueError("Series are Too short to apply an ADF test")
-            results = kpss(series.dropna(), regression='c', nlags='auto')
-            return {'P_value': results[1], 'statistic': results[0], 'critical_values': results[3]}
+            series_clean = series.dropna()
+            n = len(series_clean)
+            if n < 5:
+                raise ValueError("Series too short to apply KPSS test")
+            nlags = min(int(np.floor(12 * (n / 100) ** 0.25)), n - 2)
+            results = kpss(series_clean, regression='c', nlags=nlags)
+            return {
+                'test_statistic': results[0],
+                'p_value': results[1],
+                'lags_used': results[2],
+                'critical_values': results[3]
+            }
         except Exception as e:
-            logger.warning(f"KPSS test failed: {e}")
-            return {'P_value': 1.0, 'statistic': np.nan, 'critical_values': {}}
+            logger.warning(f"KPSS test failed for series '{series.name}': {e}")
+            return {
+                'test_statistic': np.nan,
+                'p_value': 1.0,
+                'lags_used': None,
+                'critical_values': {}
+            }
 
-    def _validate_the_data(self, data ,verbose:bool=False):
-        # Data type check
-        if isinstance(data, pd.DataFrame) or isinstance(data, pd.Series):
-            if isinstance(data, pd.Series):
-                data = data.to_frame()
-            pass
-        else:
-            raise ValueError("The input data must be a pandas DataFrame")
+    def _validate_the_data(self, data, columns=None, verbose: bool = False):
+        if isinstance(data, pd.Series):
+            data = data.to_frame()
+        elif not isinstance(data, pd.DataFrame):
+            raise ValueError("The input data must be a pandas DataFrame or Series")
+        if columns is not None:
+            missing_cols = [col for col in columns if col not in data.columns]
+            if missing_cols:
+                raise ValueError(f"The following columns are not in the data: {missing_cols}")
+            data = data[columns]
+        numeric_cols = data.select_dtypes(include=[np.integer, np.floating]).columns
+        non_numeric_cols = set(data.columns) - set(numeric_cols)
+        if non_numeric_cols and verbose:
+            logging.info(f"Skipping columns with non-numeric dtypes (not int or float): {non_numeric_cols}")
+        if not numeric_cols.all():
+            raise ValueError("No numeric columns found in the data")
+        data = data[numeric_cols]
         lengths = [len(data[col]) for col in data.columns]
         if len(set(lengths)) > 1:
             raise ValueError("All columns must have the same length")
-        # check for Nan Values
         if any(data[col].isna().any() for col in data.columns):
-            raise ValueError("Columns is entirely or contains NaN values")
-        # ==================Stationarity validation====================#
+            raise ValueError("Columns contain NaN values")
+
+        # ================== Stationarity validation =====================#
         if self.check_stationarity:
             if verbose:
-                print("Performing stationarity checks...")
-            
-            self.stationarity_results = {}  # reset results
+                logging.info("Performing stationarity checks on numeric columns...")
+            self.stationarity_results = {}
+            summary_table = []
+            for col in data.columns:
+                series = data[col]
+                if series.nunique() <= 1:
+                    if verbose:
+                        logging.info(f"Skipping stationarity test for '{col}': constant or near-constant series")
+                    self.stationarity_results[col] = {
+                        'adf': {'test_statistic': np.nan, 'p_value': np.nan, 'used_lag': 0},
+                        'kpss': {'test_statistic': np.nan, 'p_value': np.nan, 'lags_used': 0},
+                        'stationary': False
+                    }
+                    continue
 
-            # Perform stationarity tests for each column
-            for col in self.data.columns:
-                series = self.data[col]
                 adf_result = self._adf_test(series)
                 kpss_result = self._Kpss_test(series)
+                stationary = adf_result['p_value'] <= 0.05 or kpss_result['p_value'] >= 0.05
                 self.stationarity_results[col] = {
                     'adf': adf_result,
-                    'kpss': kpss_result
+                    'kpss': kpss_result,
+                    'stationary': stationary
                 }
-            verdicts = {}
-            for col, results in self.stationarity_results.items():
-                if results['adf']['P_value'] > 0.05 and results['kpss']['P_value'] < 0.05:
-                    verdicts[col] = False
-                    if verbose:
-                        print(f"Verdict: The series '{col}' is NOT stationary")
-                else:
-                    verdicts[col] = True
-                    if verbose:
-                        print(f"Verdict: The series '{col}' is stationary")
+                if verbose:
+                    summary_table.append({
+                        'Column': col,
+                        'ADF Stat': round(adf_result['test_statistic'], 4) if not np.isnan(adf_result['test_statistic']) else np.nan,
+                        'ADF p-value': round(adf_result['p_value'], 4) if not np.isnan(adf_result['p_value']) else np.nan,
+                        'ADF Lags': adf_result['used_lag'],
+                        'KPSS Stat': round(kpss_result['test_statistic'], 4) if not np.isnan(kpss_result['test_statistic']) else np.nan,
+                        'KPSS p-value': round(kpss_result['p_value'], 4) if not np.isnan(kpss_result['p_value']) else np.nan,
+                        'KPSS Lags': kpss_result['lags_used'],
+                        'Stationary': stationary
+                    })
 
-            self.stationarity_results = verdicts
-            if not np.all(list(verdicts.values())):
-                self.data = None
-                raise ValueError("Data needs to be stationary")
+            if verbose and summary_table:
+                df_summary = pd.DataFrame(summary_table)
+                logging.info("\nStationarity Test Summary:\n" + df_summary.to_string(index=False))
+            non_stationary_cols = [col for col, val in self.stationarity_results.items() if not val['stationary']]
+            if non_stationary_cols:
+                if len(non_stationary_cols) == len(data.columns):
+                    if verbose:
+                        logging.info(f"All columns are non-stationary: {non_stationary_cols}")
+                    raise ValueError(f"All columns are non-stationary: {non_stationary_cols}")
+                if verbose:
+                    logging.info(f"Non-stationary columns removed: {non_stationary_cols}")
+                self.data = data.drop(columns=non_stationary_cols, errors='ignore')
             else:
                 self.data = data
-
         else:
-            print("Skipping stationarity checks - assuming data is stationary")
+            if verbose:
+                logging.info("Skipping stationarity checks - assuming data is stationary")
+            self.data = data
+
+        return self.data
+
     # ===================Getting to the Juicy part ==========================>>>>>>>
     # First as we do we start by defining the lag Matrix
 
@@ -309,11 +370,10 @@ class VAR:
 
         print("=" * 120)
     # order_select:
-
-    def order_select(self):
+    def select_order(self):
+        self.all_results = []
         select_order_table = None
-        T, K = self.data.shape  # need to be coherant with the use of columns latter
-        # K=len(self.columns)
+        T, K = self.data.shape
         for p in range(1, self.max_p+1):
             X, Y = self.lag_matrix(p)
             beta, fitted, resids, res = ols_estimator(X, Y)
@@ -328,11 +388,24 @@ class VAR:
                 'bic': bic,
                 'hqic': hqic
             })
-
         criterion = self.criterion.lower()
         if criterion in ['aic', 'bic', 'hqic']:
-            select_order_table = pd.DataFrame(self.all_results)[
-                ['p', 'aic', 'bic', 'hqic']].sort_values(by=criterion).reset_index(drop=True)
+            select_order_table = pd.DataFrame(self.all_results)[['p', 'aic', 'bic', 'hqic']]
+            select_order_table['AIC*'] = ''
+            select_order_table['BIC*'] = ''
+            select_order_table['HQIC*'] = ''
+            min_aic_idx = select_order_table['aic'].idxmin()
+            min_bic_idx = select_order_table['bic'].idxmin()
+            min_hqic_idx = select_order_table['hqic'].idxmin()        
+            select_order_table.loc[min_aic_idx, 'AIC*'] = '*'
+            select_order_table.loc[min_bic_idx, 'BIC*'] = '**'
+            select_order_table.loc[min_hqic_idx, 'HQIC*'] = '***'
+            ranks = select_order_table[['aic', 'bic', 'hqic']].rank(method='min')
+            select_order_table['Avg_Rank'] = ranks.mean(axis=1)
+            select_order_table['Best_Model'] = ''
+            best_model_idx = select_order_table['Avg_Rank'].idxmin()
+            select_order_table.loc[best_model_idx, 'Best_Model'] = 'Best'
+            select_order_table = select_order_table.sort_values(by=criterion).reset_index(drop=True)
         return select_order_table
         # this test , so for now i'll keep it this way , although we can use this in the next func fit but for now let's keep it this way
     # the Fit method

@@ -66,7 +66,7 @@ def test_validate_data_invalid_type():
 
 def test_validate_data_nan():
     data = pd.DataFrame({'var1': [1, np.nan, 3], 'var2': [4, 5, 6]})
-    with pytest.raises(ValueError, match="Columns is entirely or contains NaN values"):
+    with pytest.raises(ValueError, match="Columns contain NaN values"):
         var = VAR(data=data, check_stationarity=False)
         var._validate_the_data(data)
 
@@ -101,8 +101,8 @@ def test_order_select(mock_ols, var_model, sample_data):
     mock_ols.return_value = (np.zeros((5, 2)), np.zeros((98, 2)), np.zeros((98, 2)), 
                              {'se': np.ones((5, 2)), 'z_values': np.zeros((5, 2)), 
                               'p_values': np.ones((5, 2))})
-    table = var_model.order_select()
-    assert table.shape == (2, 4)  # p, aic, bic, hqic
+    table = var_model.select_order()
+    assert table.shape == (2, 9)  # p, aic, bic, hqic
     assert list(table['p']) == [2, 1]
     assert var_model.criterion.lower() in ['aic', 'bic', 'hqic']
 

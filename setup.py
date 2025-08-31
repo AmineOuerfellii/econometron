@@ -12,9 +12,8 @@ setup(
     author_email="mohamedamine.ouerfelli@outlook.com",
     include_package_data=True,
     description=(
-      "Econometron is a Python library for advanced econometric analysis and time series forecasting,"
-      "combining statistical rigor with modern computational methods. It offers a precise,"
-      "extensible framework for exploring complex economic and financial dynamics."
+      "A Python library for econometric modeling and multivariate time series forecasting,"
+      "providing a precise and extensible framework for statistical analysis and computational simulations."
     ),
     long_description=long_description,
     long_description_content_type="text/markdown",

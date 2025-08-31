@@ -43,24 +43,26 @@ class SVAR(VAR):
 
         self.identification_method = method
 
+        p = self.best_model['p']
+        beta = self.best_model['beta']
+        intercept_included = beta.shape[0] == K * p + 1
+        A_mats = beta[1:] if intercept_included else beta
+        A_mats = A_mats.reshape(p, K, K).transpose(2, 1, 0)
+
         if method == 'chol':
-            # Cholesky decomposition: A is lower triangular, B is identity
-            self.B = np.eye(K)
-            self.A = np.linalg.cholesky(Sigma+1e-8*np.eye(K))
-            self.A_inv_B = self.A
-        elif method == 'blanchard-quah':
-            # Blanchard-Quah: long-run restrictions
-            # Compute cumulative IRF at long horizon
-            irf = self.impulse_res(
-                h=50, orth=False, bootstrap=False, plot=False)
-            long_run_effect = irf[-1]  # Last horizon for long-run effect
-            # QR decomposition to ensure orthogonality
-            Q, R = np.linalg.qr(long_run_effect)
             self.A = np.eye(K)
-            self.B = Q
-            self.A_inv_B = Q
+            self.B = np.linalg.cholesky(Sigma + 1e-8 * np.eye(K))
+            self.A_inv_B = self.B
+        elif method == 'blanchard-quah':
+            sum_phi = np.sum(A_mats, axis=2)
+            I_minus_sum = np.eye(K) - sum_phi
+            F = np.linalg.inv(I_minus_sum)
+            gamma = F @ Sigma @ F.T
+            L = np.linalg.cholesky(gamma + 1e-8 * np.eye(K))
+            self.B = np.linalg.solve(F, L)
+            self.A = np.eye(K)
+            self.A_inv_B = self.B
         elif method == 'AB':
-            # AB model: user-specified A and B matrices
             if A is None or B is None:
                 raise ValueError(
                     "A and B matrices must be provided for AB identification")
@@ -130,7 +132,7 @@ class SVAR(VAR):
                 plt.show()
             return irf
 
-        boot_irfs = np.zeros((n_boot, h, K, K))
+        boot_irfs = np.zeros((n_boot, h+1, K, K))
         residuals = self.best_model['residuals']
         T, K = residuals.shape
         data = self.data.values
@@ -139,7 +141,7 @@ class SVAR(VAR):
             boot_idx = np.random.choice(T, size=T, replace=True)
             boot_resids = residuals[boot_idx]
             Y_sim = np.zeros((T + p, K))
-            Y_sim[:p] = np.flipud(data[-p:])
+            Y_sim[:p] = data[-p:]  # Corrected: no flipud
             intercept = beta[0] if intercept_included else np.zeros(K)
 
             for t in range(p, T + p):
@@ -170,12 +172,14 @@ class SVAR(VAR):
                 boot_Sigma = np.cov(boot_resids.T)
                 try:
                     if self.identification_method == 'chol':
-                        P = np.linalg.cholesky(boot_Sigma)
+                        P = np.linalg.cholesky(boot_Sigma + 1e-8 * np.eye(K))
                     elif self.identification_method == 'blanchard-quah':
-                        boot_irf_long = np.array(
-                            [boot_Psi[i] for i in range(50)])
-                        Q, _ = np.linalg.qr(boot_irf_long[-1])
-                        P = Q
+                        boot_sum_phi = np.sum(boot_A, axis=2)
+                        boot_I_minus = np.eye(K) - boot_sum_phi
+                        boot_F = np.linalg.inv(boot_I_minus)
+                        boot_gamma = boot_F @ boot_Sigma @ boot_F.T
+                        boot_L = np.linalg.cholesky(boot_gamma + 1e-8 * np.eye(K))
+                        P = np.linalg.solve(boot_F, boot_L)
                     else:  # AB model
                         P = solve(self.A, self.B, assume_a='gen')
                     boot_irf = np.array([boot_Psi[i] @ P for i in range(h+1)])
@@ -219,18 +223,16 @@ class SVAR(VAR):
         """
         K = len(self.columns)
         irf = self.impulse_res(h=h, orth=True, bootstrap=False, plot=False)
-        Sigma = np.cov(self.best_model['residuals'].T)
         fevd = np.zeros((h+1, K, K))
         mse = np.zeros((h+1, K))
 
         for i in range(h+1):
             for j in range(K):
                 for t in range(i + 1):
-                    mse[i, j] += np.sum(irf[t, j, :] ** 2 *
-                                        np.diag(self.B @ self.B.T))
+                    mse[i, j] += np.sum(irf[t, j, :] ** 2)
                 for k in range(K):
                     fevd[i, j, k] = np.sum(
-                        irf[:i + 1, j, k] ** 2 * (self.B @ self.B.T)[k, k]) / mse[i, j] if mse[i, j] != 0 else 0
+                        irf[:i + 1, j, k] ** 2) / mse[i, j] if mse[i, j] != 0 else 0
 
         if plot:
             fig, axes = plt.subplots(K, 1, figsize=(10, 4 * K), sharex=True)
@@ -261,8 +263,7 @@ class SVAR(VAR):
                 "Structural identification not performed or model not fitted.")
 
         residuals = self.best_model['residuals']
-        structural_shocks = solve(self.A, residuals.T, assume_a='gen').T
-        return structural_shocks
+        return np.linalg.solve(self.B, self.A @ residuals.T).T
 
     def shock_decomposition(self, h=10, plot=False):
         """
@@ -280,40 +281,27 @@ class SVAR(VAR):
         intercept_included = beta.shape[0] == K * p + 1
         A = beta[1:] if intercept_included else beta
         A = A.reshape(p, K, K).transpose(2, 1, 0)
-
-        # Compute structural shocks
         structural_shocks = self.get_structural_shocks()
-
-        # Compute IRFs
         Psi = np.zeros((h+1, K, K))
         Psi[0] = np.eye(K)
         for i in range(1, h+1):
             for j in range(min(i, p)):
                 Psi[i] += A[:, :, j] @ Psi[i - j - 1]
         structural_irf = np.array([Psi[i] @ self.A_inv_B for i in range(h+1)])
-
-        # Initialize decomposition
-        decomp = np.zeros((T, K, K + 1))  # +1 for initial conditions
+        decomp = np.zeros((T, K, K + 1)) 
         data = self.data.values
         intercept = beta[0] if intercept_included else np.zeros(K)
-
-        # Compute contributions
         for t in range(p, T):
-            # Initial conditions (mean effect and lagged values)
             initial = np.zeros(K)
             for j in range(p):
                 initial += A[:, :, j] @ data[t - j - 1]
             if intercept_included:
                 initial += intercept
             decomp[t, :, K] = initial
-
-            # Shock contributions
             for k in range(K):
                 for s in range(min(t - p + 1, h+1)):
                     decomp[t, :, k] += structural_irf[s, :, k] * \
                         structural_shocks[t - s - p, k]
-
-        # Fill in initial periods with zeros
         decomp[:p, :, :] = 0
 
         if plot:
