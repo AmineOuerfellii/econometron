@@ -560,7 +560,7 @@ class VARMA(VAR):
         else:
             return None
 
-    def display_results(self, results):
+    def display_results(self,results,header:bool=True):
         params = np.array(results.get('par', []))
         p = results.get('p')
         q = results.get('q')
@@ -582,9 +582,10 @@ class VARMA(VAR):
         signif = results.get('signif', [''] * num_params)
         # === HEADER ===
         print("=" * 70)
-        print(
-            f"{'Structural' if self.structural_id else 'Non-Structural'} VARMA({p},{q})".center(70))
-        print("=" * 70)
+        if header:
+            print(
+                f"{'Structural' if self.structural_id else 'Non-Structural'} VARMA({p},{q})".center(70))
+            print("=" * 70)
         print(
             f"Log-likelihood: {loglik:.4f} | Model type: {model_type} | Time: {time_now}")
         print(

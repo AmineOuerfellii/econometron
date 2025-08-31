@@ -121,33 +121,12 @@ class VARIMA(VARMA):
         self.best_q=self.best_model['q']
         if output:
             logger.info("VARIMA model fitting completed.")
+            print("="*60)
             print(f"VARIMA({self.best_p},{max(self.diff_orders.values())},{self.best_q})")
-            results=self.best_model
-            par = results["par"]
-            se = results["se"]
-            tvals = results["tvals"]
-            pvals = results["pvals"]
-            signif = results["signif"]
-
-            # Build DataFrame
-            df = pd.DataFrame({
-                "coef": par,
-                "std err": se,
-                "t": tvals,
-                "P>|t|": pvals,
-                "signif": signif
-            })
-
-            # Format for readability
-            df = df.round({
-                "coef": 4,
-                "std err": 4,
-                "t": 3,
-                "P>|t|": 3
-            })
+            self.display_results(self.best_model,header=False)
             self.trns_info()
-
-        return df
+            res=self.best_model
+        return res
 
     def trns_info(self) -> dict:
         """
