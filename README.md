@@ -2,7 +2,8 @@
 ![Econometron Logo](/econometron.png)
 
 # Econometron: A Python package for Econometric and Time Series Analysis
-
+[![PyPI Version](https://img.shields.io/pypi/v/econometron?color=blue&label=PyPI)](https://pypi.org/project/econometron/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
 ## Introduction
 
 Econometron is a Python library designed for econometric modeling, time series analysis, and dynamic stochastic general equilibrium (DSGE) model solving and estimation. It provides a wide range of tools for researchers, economists, and data scientists to build, estimate, and analyze complex multivariate time series models and non-linear DSGE models. With a focus on flexibility and performance, Econometron supports both classical and modern approaches, including state-of-the-art neural network-based forecasting and robust statistical methods.
